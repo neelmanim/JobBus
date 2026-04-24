@@ -1,0 +1,298 @@
+import Foundation
+import Security
+
+// MARK: - Provider Configuration
+enum SearchProviderType: String, Codable, CaseIterable, Identifiable {
+    case apollo = "Apollo.io"
+    case hunter = "Hunter.io"
+    case rocketReach = "RocketReach"
+    
+    var id: String { rawValue }
+    
+    var description: String {
+        switch self {
+        case .apollo: return "Search and enrich contacts with Apollo's database of 200M+ professionals"
+        case .hunter: return "Find and verify professional email addresses using domain search"
+        case .rocketReach: return "Access professional profiles and verified contact info"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .apollo: return "a.circle.fill"
+        case .hunter: return "scope"
+        case .rocketReach: return "rocket.fill"
+        }
+    }
+}
+
+enum AIProviderType: String, Codable, CaseIterable, Identifiable {
+    case ollama = "Ollama (Local)"
+    case gemini = "Gemini Flash"
+    case groq = "Groq"
+    
+    var id: String { rawValue }
+    
+    var description: String {
+        switch self {
+        case .ollama: return "Free, private, runs locally on your Mac. Requires Ollama installed."
+        case .gemini: return "Google's free API. Fast, high quality. Requires API key."
+        case .groq: return "Ultra-fast cloud inference. Free tier available. Requires API key."
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .ollama: return "desktopcomputer"
+        case .gemini: return "sparkles"
+        case .groq: return "bolt.fill"
+        }
+    }
+    
+    var requiresApiKey: Bool {
+        switch self {
+        case .ollama: return false
+        case .gemini, .groq: return true
+        }
+    }
+}
+
+enum EmailProviderType: String, Codable, CaseIterable, Identifiable {
+    case gmail = "Gmail SMTP"
+    case outlook = "Outlook SMTP"
+    case custom = "Custom SMTP"
+    
+    var id: String { rawValue }
+    
+    var description: String {
+        switch self {
+        case .gmail: return "Send from your Gmail using App Password. Emails appear in your Sent folder."
+        case .outlook: return "Send from Outlook/Hotmail using App Password."
+        case .custom: return "Use any SMTP server with custom host/port."
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .gmail: return "envelope.fill"
+        case .outlook: return "envelope.badge.fill"
+        case .custom: return "server.rack"
+        }
+    }
+    
+    var host: String {
+        switch self {
+        case .gmail: return "smtp.gmail.com"
+        case .outlook: return "smtp.office365.com"
+        case .custom: return ""
+        }
+    }
+    
+    var port: Int {
+        switch self {
+        case .gmail: return 587
+        case .outlook: return 587
+        case .custom: return 587
+        }
+    }
+}
+
+// MARK: - App Settings
+class AppSettings: ObservableObject, Codable {
+    // Provider selections
+    @Published var searchProvider: SearchProviderType
+    @Published var aiProvider: AIProviderType
+    @Published var emailProvider: EmailProviderType
+    
+    // SMTP settings
+    @Published var smtpEmail: String
+    @Published var smtpDisplayName: String
+    @Published var customSmtpHost: String
+    @Published var customSmtpPort: Int
+    
+    // Campaign settings
+    @Published var delaySeconds: Double
+    @Published var maxPerDay: Int
+    @Published var businessHoursOnly: Bool
+    @Published var businessHoursStart: Int
+    @Published var businessHoursEnd: Int
+    @Published var warmUpEnabled: Bool
+    @Published var contactCount: Int
+    
+    // Sandbox mode
+    @Published var sandboxMode: Bool
+    @Published var sandboxHost: String
+    @Published var sandboxPort: Int
+    
+    // Signature
+    @Published var signatureName: String
+    @Published var signatureTitle: String
+    @Published var signatureLinkedin: String
+    @Published var signaturePhone: String
+    
+    // Ollama settings
+    @Published var ollamaModel: String
+    @Published var ollamaBaseURL: String
+    
+    enum CodingKeys: CodingKey {
+        case searchProvider, aiProvider, emailProvider
+        case smtpEmail, smtpDisplayName, customSmtpHost, customSmtpPort
+        case delaySeconds, maxPerDay, businessHoursOnly, businessHoursStart, businessHoursEnd
+        case warmUpEnabled, contactCount, sandboxMode, sandboxHost, sandboxPort
+        case signatureName, signatureTitle, signatureLinkedin, signaturePhone
+        case ollamaModel, ollamaBaseURL
+    }
+    
+    init() {
+        self.searchProvider = .apollo
+        self.aiProvider = .ollama
+        self.emailProvider = .gmail
+        self.smtpEmail = ""
+        self.smtpDisplayName = ""
+        self.customSmtpHost = ""
+        self.customSmtpPort = 587
+        self.delaySeconds = 45
+        self.maxPerDay = 450
+        self.businessHoursOnly = true
+        self.businessHoursStart = 9
+        self.businessHoursEnd = 18
+        self.warmUpEnabled = true
+        self.contactCount = 250
+        self.sandboxMode = true  // ON by default for safety
+        self.sandboxHost = "localhost"
+        self.sandboxPort = 1025
+        self.signatureName = ""
+        self.signatureTitle = ""
+        self.signatureLinkedin = ""
+        self.signaturePhone = ""
+        self.ollamaModel = "llama3.1:8b"
+        self.ollamaBaseURL = "http://localhost:11434"
+    }
+    
+    required init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        searchProvider = try c.decodeIfPresent(SearchProviderType.self, forKey: .searchProvider) ?? .apollo
+        aiProvider = try c.decodeIfPresent(AIProviderType.self, forKey: .aiProvider) ?? .ollama
+        emailProvider = try c.decodeIfPresent(EmailProviderType.self, forKey: .emailProvider) ?? .gmail
+        smtpEmail = try c.decodeIfPresent(String.self, forKey: .smtpEmail) ?? ""
+        smtpDisplayName = try c.decodeIfPresent(String.self, forKey: .smtpDisplayName) ?? ""
+        customSmtpHost = try c.decodeIfPresent(String.self, forKey: .customSmtpHost) ?? ""
+        customSmtpPort = try c.decodeIfPresent(Int.self, forKey: .customSmtpPort) ?? 587
+        delaySeconds = try c.decodeIfPresent(Double.self, forKey: .delaySeconds) ?? 45
+        maxPerDay = try c.decodeIfPresent(Int.self, forKey: .maxPerDay) ?? 450
+        businessHoursOnly = try c.decodeIfPresent(Bool.self, forKey: .businessHoursOnly) ?? true
+        businessHoursStart = try c.decodeIfPresent(Int.self, forKey: .businessHoursStart) ?? 9
+        businessHoursEnd = try c.decodeIfPresent(Int.self, forKey: .businessHoursEnd) ?? 18
+        warmUpEnabled = try c.decodeIfPresent(Bool.self, forKey: .warmUpEnabled) ?? true
+        contactCount = try c.decodeIfPresent(Int.self, forKey: .contactCount) ?? 250
+        sandboxMode = try c.decodeIfPresent(Bool.self, forKey: .sandboxMode) ?? true
+        sandboxHost = try c.decodeIfPresent(String.self, forKey: .sandboxHost) ?? "localhost"
+        sandboxPort = try c.decodeIfPresent(Int.self, forKey: .sandboxPort) ?? 1025
+        signatureName = try c.decodeIfPresent(String.self, forKey: .signatureName) ?? ""
+        signatureTitle = try c.decodeIfPresent(String.self, forKey: .signatureTitle) ?? ""
+        signatureLinkedin = try c.decodeIfPresent(String.self, forKey: .signatureLinkedin) ?? ""
+        signaturePhone = try c.decodeIfPresent(String.self, forKey: .signaturePhone) ?? ""
+        ollamaModel = try c.decodeIfPresent(String.self, forKey: .ollamaModel) ?? "llama3.1:8b"
+        ollamaBaseURL = try c.decodeIfPresent(String.self, forKey: .ollamaBaseURL) ?? "http://localhost:11434"
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(searchProvider, forKey: .searchProvider)
+        try c.encode(aiProvider, forKey: .aiProvider)
+        try c.encode(emailProvider, forKey: .emailProvider)
+        try c.encode(smtpEmail, forKey: .smtpEmail)
+        try c.encode(smtpDisplayName, forKey: .smtpDisplayName)
+        try c.encode(customSmtpHost, forKey: .customSmtpHost)
+        try c.encode(customSmtpPort, forKey: .customSmtpPort)
+        try c.encode(delaySeconds, forKey: .delaySeconds)
+        try c.encode(maxPerDay, forKey: .maxPerDay)
+        try c.encode(businessHoursOnly, forKey: .businessHoursOnly)
+        try c.encode(businessHoursStart, forKey: .businessHoursStart)
+        try c.encode(businessHoursEnd, forKey: .businessHoursEnd)
+        try c.encode(warmUpEnabled, forKey: .warmUpEnabled)
+        try c.encode(contactCount, forKey: .contactCount)
+        try c.encode(sandboxMode, forKey: .sandboxMode)
+        try c.encode(sandboxHost, forKey: .sandboxHost)
+        try c.encode(sandboxPort, forKey: .sandboxPort)
+        try c.encode(signatureName, forKey: .signatureName)
+        try c.encode(signatureTitle, forKey: .signatureTitle)
+        try c.encode(signatureLinkedin, forKey: .signatureLinkedin)
+        try c.encode(signaturePhone, forKey: .signaturePhone)
+        try c.encode(ollamaModel, forKey: .ollamaModel)
+        try c.encode(ollamaBaseURL, forKey: .ollamaBaseURL)
+    }
+    
+    // MARK: - Persistence
+    
+    private static var settingsURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = appSupport.appendingPathComponent("JobBus", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("settings.json")
+    }
+    
+    func save() {
+        if let data = try? JSONEncoder().encode(self) {
+            try? data.write(to: Self.settingsURL)
+        }
+    }
+    
+    static func load() -> AppSettings {
+        guard let data = try? Data(contentsOf: settingsURL),
+              let settings = try? JSONDecoder().decode(AppSettings.self, from: data)
+        else { return AppSettings() }
+        return settings
+    }
+}
+
+// MARK: - Keychain Service
+class KeychainService {
+    static let shared = KeychainService()
+    
+    private let serviceName = "com.jobbus.credentials"
+    
+    enum KeychainKey: String {
+        case apolloApiKey = "apollo_api_key"
+        case hunterApiKey = "hunter_api_key"
+        case rocketReachApiKey = "rocketreach_api_key"
+        case geminiApiKey = "gemini_api_key"
+        case groqApiKey = "groq_api_key"
+        case smtpPassword = "smtp_password"
+    }
+    
+    func save(key: KeychainKey, value: String) {
+        let data = value.data(using: .utf8)!
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: key.rawValue,
+            kSecValueData as String: data
+        ]
+        SecItemDelete(query as CFDictionary)
+        SecItemAdd(query as CFDictionary, nil)
+    }
+    
+    func get(key: KeychainKey) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: key.rawValue,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+    
+    func delete(key: KeychainKey) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: key.rawValue
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+}
