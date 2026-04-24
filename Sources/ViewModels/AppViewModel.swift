@@ -41,12 +41,17 @@ class AppViewModel: ObservableObject {
     var searchProvider: ContactSearchProvider {
         switch settings.searchProvider {
         case .apollo: return ApolloSearchProvider()
-        case .hunter, .rocketReach: return ApolloSearchProvider() // Fallback for now
+        case .hunter: return HunterSearchProvider()
+        case .rocketReach: return RocketReachSearchProvider()
         }
     }
     
     var enrichmentProvider: EmailEnrichmentProvider {
-        return ApolloSearchProvider()
+        switch settings.searchProvider {
+        case .apollo: return ApolloSearchProvider()
+        case .hunter: return HunterSearchProvider()
+        case .rocketReach: return RocketReachSearchProvider()
+        }
     }
     
     var aiProvider: AIProvider {
@@ -56,7 +61,7 @@ class AppViewModel: ObservableObject {
         case .gemini:
             return GeminiFlashProvider()
         case .groq:
-            return GeminiFlashProvider() // Fallback for now
+            return GroqProvider()
         }
     }
     
@@ -75,12 +80,20 @@ class AppViewModel: ObservableObject {
         loadingMessage = "Reading resume..."
         
         do {
-            let text: String
-            if url.pathExtension.lowercased() == "pdf" {
-                text = try pdfParser.extractText(from: url)
-            } else {
-                text = try docxParser.extractText(from: url)
-            }
+            // Offload heavy file I/O to a background thread so the UI stays responsive.
+            // PDFKit text extraction and DOCX XML parsing are CPU-heavy and must not
+            // run on @MainActor — this was the primary cause of the app freeze/crash.
+            let pdfParser = self.pdfParser
+            let docxParser = self.docxParser
+            let fileExtension = url.pathExtension.lowercased()
+            
+            let text: String = try await Task.detached(priority: .userInitiated) {
+                if fileExtension == "pdf" {
+                    return try pdfParser.extractText(from: url)
+                } else {
+                    return try docxParser.extractText(from: url)
+                }
+            }.value
             
             loadingMessage = "AI analyzing your resume..."
             let profile = try await resumeAnalyzer.analyze(resumeText: text, ai: aiProvider)
@@ -100,9 +113,35 @@ class AppViewModel: ObservableObject {
             
             isLoading = false
             currentStep = .strategy
+        } catch is CancellationError {
+            isLoading = false
+            showError("Resume parsing was cancelled.")
+        } catch let providerError as ProviderError {
+            isLoading = false
+            switch providerError {
+            case .notConfigured(let msg):
+                showError(msg)
+            case .invalidApiKey:
+                showError("Invalid API key for \(settings.aiProvider.rawValue).\n\nGo to Settings → Providers to check your API key.")
+            case .rateLimited(let msg):
+                showError("Rate limit reached for \(settings.aiProvider.rawValue).\n\n\(msg)\n\nPlease wait a minute or switch to a different provider.")
+            case .serviceUnavailable(let msg):
+                if settings.aiProvider == .ollama {
+                    showError("Ollama is not running.\n\n1. Install: brew install ollama\n2. Start: ollama serve\n3. Pull model: ollama pull llama3.1:8b\n\nOr switch to Gemini/Groq in Settings → Providers.")
+                } else {
+                    showError("Service unavailable: \(msg)")
+                }
+            default:
+                showError(providerError.localizedDescription)
+            }
         } catch {
             isLoading = false
-            showError(error.localizedDescription)
+            let msg = error.localizedDescription
+            if msg.contains("Could not connect") || msg.contains("Connection refused") {
+                showError("Could not connect to \(settings.aiProvider.rawValue). Check your internet connection and try again.")
+            } else {
+                showError(msg)
+            }
         }
     }
     
@@ -130,6 +169,20 @@ class AppViewModel: ObservableObject {
             
             isLoading = false
             currentStep = .contacts
+        } catch let providerError as ProviderError {
+            isLoading = false
+            switch providerError {
+            case .notConfigured(let msg):
+                showError(msg)
+            case .invalidApiKey:
+                showError("Invalid Apollo API key.\n\nGo to Settings → Providers to check your Apollo key.")
+            case .rateLimited(let msg):
+                showError("Apollo rate limit reached.\n\n\(msg)")
+            case .creditsExhausted:
+                showError("Apollo credits exhausted.\n\nUpgrade your Apollo plan or use CSV import / Manual entry instead.")
+            default:
+                showError(providerError.localizedDescription)
+            }
         } catch {
             isLoading = false
             showError(error.localizedDescription)

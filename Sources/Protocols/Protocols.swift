@@ -77,7 +77,7 @@ struct SendResult {
 // MARK: - Provider Errors
 enum ProviderError: LocalizedError {
     case invalidApiKey
-    case rateLimited(retryAfter: Int)
+    case rateLimited(String)
     case creditsExhausted
     case networkError(String)
     case parseError(String)
@@ -89,7 +89,7 @@ enum ProviderError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidApiKey: return "Invalid API key. Please check and re-enter."
-        case .rateLimited(let seconds): return "Rate limited. Retrying in \(seconds) seconds."
+        case .rateLimited(let msg): return "Rate limited: \(msg)"
         case .creditsExhausted: return "API credits exhausted. Please add more credits or switch provider."
         case .networkError(let msg): return "Network error: \(msg)"
         case .parseError(let msg): return "Failed to parse response: \(msg)"

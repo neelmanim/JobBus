@@ -1,8 +1,29 @@
 import SwiftUI
-import SwiftData
+import AppKit
+
+// MARK: - App Delegate
+// SPM-built SwiftUI apps don't get proper foreground activation.
+// This delegate ensures the app registers as a regular GUI app
+// so text fields can receive keyboard focus and clipboard access.
+class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Register as a regular foreground app (shows in Dock, gets menu bar)
+        NSApplication.shared.setActivationPolicy(.regular)
+        // Force activate so windows receive keyboard focus
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+    
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // Ensure focus on every reactivation (e.g., switching back from another app)
+        if let window = NSApplication.shared.windows.first {
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+}
 
 @main
 struct JobBusApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appViewModel = AppViewModel()
     
     var body: some Scene {

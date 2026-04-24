@@ -13,7 +13,7 @@ class ApolloSearchProvider: ContactSearchProvider, EmailEnrichmentProvider {
     // MARK: - Search
     
     func search(strategy: SearchStrategy, count: Int) async throws -> [Contact] {
-        guard !apiKey.isEmpty else { throw ProviderError.notConfigured("Apollo API key not set") }
+        guard !apiKey.isEmpty else { throw ProviderError.notConfigured("Apollo API key not set.\n\nGo to Settings → Providers to add your Apollo.io key.") }
         
         var allContacts: [Contact] = []
         let perPage = min(100, count)
@@ -91,8 +91,8 @@ class ApolloSearchProvider: ContactSearchProvider, EmailEnrichmentProvider {
         case 401:
             throw ProviderError.invalidApiKey
         case 429:
-            let retryAfter = Int(httpResponse.value(forHTTPHeaderField: "Retry-After") ?? "60") ?? 60
-            throw ProviderError.rateLimited(retryAfter: retryAfter)
+            let retryAfter = httpResponse.value(forHTTPHeaderField: "Retry-After") ?? "60"
+            throw ProviderError.rateLimited("Rate limited. Retry after \(retryAfter) seconds.")
         default:
             let body = String(data: data, encoding: .utf8) ?? "Unknown error"
             throw ProviderError.networkError("HTTP \(httpResponse.statusCode): \(body)")
@@ -139,7 +139,7 @@ class ApolloSearchProvider: ContactSearchProvider, EmailEnrichmentProvider {
     // MARK: - Enrichment
     
     func enrich(contact: Contact) async throws -> Contact {
-        guard !apiKey.isEmpty else { throw ProviderError.notConfigured("Apollo API key not set") }
+        guard !apiKey.isEmpty else { throw ProviderError.notConfigured("Apollo API key not set.\n\nGo to Settings → Providers to add your Apollo.io key.") }
         
         let url = URL(string: "\(baseURL)/people/match")!
         var request = URLRequest(url: url)
@@ -187,7 +187,7 @@ class ApolloSearchProvider: ContactSearchProvider, EmailEnrichmentProvider {
         case 401:
             throw ProviderError.invalidApiKey
         case 429:
-            throw ProviderError.rateLimited(retryAfter: 60)
+            throw ProviderError.rateLimited("Rate limited. Retry after 60 seconds.")
         default:
             throw ProviderError.networkError("HTTP \(httpResponse.statusCode)")
         }
@@ -202,9 +202,9 @@ class ApolloSearchProvider: ContactSearchProvider, EmailEnrichmentProvider {
             do {
                 let result = try await enrich(contact: contact)
                 enriched.append(result)
-            } catch ProviderError.rateLimited(let retryAfter) {
+            } catch ProviderError.rateLimited(_) {
                 // Wait and retry once
-                try await Task.sleep(for: .seconds(retryAfter))
+                try await Task.sleep(for: .seconds(60))
                 let result = try await enrich(contact: contact)
                 enriched.append(result)
             } catch ProviderError.creditsExhausted {

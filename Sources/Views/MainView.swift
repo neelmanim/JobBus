@@ -3,96 +3,161 @@ import SwiftUI
 // MARK: - Main View
 struct MainView: View {
     @EnvironmentObject var vm: AppViewModel
+    @State private var showSettings = false
+    @State private var sidebarHover: AppStep? = nil
     
     var body: some View {
         NavigationSplitView {
-            // Sidebar
+            // MARK: - Sidebar
             VStack(alignment: .leading, spacing: 0) {
-                // App Header
-                HStack(spacing: 10) {
-                    Image(systemName: "bus.fill")
-                        .font(.title2)
-                        .foregroundStyle(.linearGradient(
-                            colors: [Color(hex: "#8b5cf6"), Color(hex: "#3b82f6")],
-                            startPoint: .topLeading, endPoint: .bottomTrailing
-                        ))
-                    Text("Job Bus")
-                        .font(.title2.bold())
-                        .foregroundColor(.primary)
+                // App Logo
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(LinearGradient(
+                                colors: [Color(hex: "#8b5cf6"), Color(hex: "#3b82f6")],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            ))
+                            .frame(width: 36, height: 36)
+                        
+                        Image(systemName: "bus.fill")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Job Bus")
+                            .font(.title3.bold())
+                        Text("Outreach Manager")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 20)
-                .padding(.bottom, 24)
+                .padding(.bottom, 28)
                 
                 // Step Navigation
-                ForEach(AppStep.allCases) { step in
-                    StepNavItem(
-                        step: step,
-                        isActive: vm.currentStep == step,
-                        isComplete: step.rawValue < vm.currentStep.rawValue
-                    ) {
-                        if step.rawValue <= vm.currentStep.rawValue {
-                            vm.currentStep = step
+                VStack(spacing: 6) {
+                    ForEach(AppStep.allCases) { step in
+                        StepNavItem(
+                            step: step,
+                            isActive: vm.currentStep == step,
+                            isComplete: step.rawValue < vm.currentStep.rawValue,
+                            isHovered: sidebarHover == step
+                        ) {
+                            if step.rawValue <= vm.currentStep.rawValue {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    vm.currentStep = step
+                                }
+                            }
+                        }
+                        .onHover { hovering in
+                            sidebarHover = hovering ? step : nil
                         }
                     }
                 }
+                .padding(.horizontal, 12)
                 
                 Spacer()
                 
                 // Sandbox Banner
                 if vm.settings.sandboxMode {
-                    HStack {
+                    HStack(spacing: 6) {
                         Image(systemName: "flask.fill")
+                            .font(.caption2)
                         Text("SANDBOX MODE")
-                            .font(.caption.bold())
+                            .font(.caption2.bold())
+                            .tracking(0.5)
                     }
                     .foregroundColor(.orange)
-                    .padding(8)
+                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity)
-                    .background(Color.orange.opacity(0.15))
-                    .cornerRadius(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.orange.opacity(0.1))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.orange.opacity(0.2), lineWidth: 1)
+                            )
+                    )
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 12)
                 }
                 
                 // Settings Button
                 Divider()
+                    .padding(.horizontal, 16)
+                
                 Button {
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                    showSettings = true
                 } label: {
-                    HStack {
+                    HStack(spacing: 10) {
                         Image(systemName: "gearshape.fill")
+                            .font(.body)
+                            .foregroundColor(.secondary)
                         Text("Settings")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                            .foregroundColor(.gray.opacity(0.4))
                     }
                     .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
+                    .padding(.vertical, 14)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(.secondary)
             }
-            .frame(minWidth: 200)
+            .frame(minWidth: 220, idealWidth: 240)
         } detail: {
-            // Content Area
+            // MARK: - Content Area
             ZStack {
                 switch vm.currentStep {
                 case .resume:
                     Step1_ResumeView()
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .trailing)),
+                            removal: .opacity.combined(with: .move(edge: .leading))
+                        ))
                 case .strategy:
                     Step2_StrategyView()
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .trailing)),
+                            removal: .opacity.combined(with: .move(edge: .leading))
+                        ))
                 case .contacts:
                     Step3_ContactsView()
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .trailing)),
+                            removal: .opacity.combined(with: .move(edge: .leading))
+                        ))
                 case .drafts:
                     Step4_DraftsView()
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .trailing)),
+                            removal: .opacity.combined(with: .move(edge: .leading))
+                        ))
                 case .send:
                     Step5_SendView()
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .trailing)),
+                            removal: .opacity.combined(with: .move(edge: .leading))
+                        ))
                 }
             }
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: vm.currentStep)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .alert("Error", isPresented: $vm.showError) {
             Button("OK") { vm.showError = false }
         } message: {
             Text(vm.errorMessage ?? "An unknown error occurred.")
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+                .environmentObject(vm)
         }
     }
 }
@@ -102,41 +167,68 @@ struct StepNavItem: View {
     let step: AppStep
     let isActive: Bool
     let isComplete: Bool
+    let isHovered: Bool
     let action: () -> Void
+    
+    private var isAccessible: Bool { isComplete || isActive }
+    
+    private var accentColor: Color {
+        isActive ? Color(hex: "#8b5cf6") : isComplete ? Color(hex: "#10b981") : Color.gray.opacity(0.4)
+    }
     
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
+                // Step Indicator
                 ZStack {
                     Circle()
-                        .fill(isActive ? Color(hex: "#8b5cf6") : isComplete ? Color(hex: "#10b981") : Color.gray.opacity(0.3))
-                        .frame(width: 28, height: 28)
+                        .fill(isActive
+                            ? LinearGradient(colors: [Color(hex: "#8b5cf6"), Color(hex: "#6366f1")], startPoint: .topLeading, endPoint: .bottomTrailing)
+                            : isComplete
+                                ? LinearGradient(colors: [Color(hex: "#10b981"), Color(hex: "#059669")], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                : LinearGradient(colors: [Color.gray.opacity(0.2), Color.gray.opacity(0.15)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        )
+                        .frame(width: 30, height: 30)
                     
                     if isComplete {
                         Image(systemName: "checkmark")
-                            .font(.caption.bold())
+                            .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.white)
                     } else {
                         Image(systemName: step.icon)
-                            .font(.caption)
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(isActive ? .white : .secondary)
                     }
                 }
                 
+                // Label
                 Text(step.title)
                     .font(.body.weight(isActive ? .semibold : .regular))
-                    .foregroundColor(isActive ? .primary : .secondary)
+                    .foregroundColor(isActive ? .primary : isComplete ? .primary.opacity(0.8) : .secondary)
                 
                 Spacer()
+                
+                // Step number
+                if !isComplete && !isActive {
+                    Text("\(step.rawValue + 1)")
+                        .font(.caption2.weight(.medium))
+                        .foregroundColor(.gray.opacity(0.4))
+                }
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(isActive ? Color(hex: "#8b5cf6").opacity(0.12) : Color.clear)
-            .cornerRadius(8)
-            .padding(.horizontal, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isActive ? Color(hex: "#8b5cf6").opacity(0.12)
+                          : isHovered && isAccessible ? Color.primary.opacity(0.04)
+                          : Color.clear)
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!isComplete && !isActive && step.rawValue > (isComplete ? step.rawValue : 0))
+        .disabled(!isAccessible)
+        .animation(.easeInOut(duration: 0.15), value: isActive)
+        .animation(.easeInOut(duration: 0.1), value: isHovered)
     }
 }
 

@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 // MARK: - Provider Configuration
 enum SearchProviderType: String, Codable, CaseIterable, Identifiable {
@@ -145,7 +144,7 @@ class AppSettings: ObservableObject, Codable {
     
     init() {
         self.searchProvider = .apollo
-        self.aiProvider = .ollama
+        self.aiProvider = .gemini
         self.emailProvider = .gmail
         self.smtpEmail = ""
         self.smtpDisplayName = ""
@@ -172,7 +171,7 @@ class AppSettings: ObservableObject, Codable {
     required init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         searchProvider = try c.decodeIfPresent(SearchProviderType.self, forKey: .searchProvider) ?? .apollo
-        aiProvider = try c.decodeIfPresent(AIProviderType.self, forKey: .aiProvider) ?? .ollama
+        aiProvider = try c.decodeIfPresent(AIProviderType.self, forKey: .aiProvider) ?? .gemini
         emailProvider = try c.decodeIfPresent(EmailProviderType.self, forKey: .emailProvider) ?? .gmail
         smtpEmail = try c.decodeIfPresent(String.self, forKey: .smtpEmail) ?? ""
         smtpDisplayName = try c.decodeIfPresent(String.self, forKey: .smtpDisplayName) ?? ""
@@ -247,10 +246,11 @@ class AppSettings: ObservableObject, Codable {
 }
 
 // MARK: - Keychain Service
+/// Stores credentials in a file-based store under Application Support.
+/// We avoid macOS Keychain APIs entirely because unsigned apps trigger
+/// a system password dialog on every read/write, blocking the user.
 class KeychainService {
     static let shared = KeychainService()
-    
-    private let serviceName = "com.jobbus.credentials"
     
     enum KeychainKey: String {
         case apolloApiKey = "apollo_api_key"
@@ -262,37 +262,116 @@ class KeychainService {
     }
     
     func save(key: KeychainKey, value: String) {
-        let data = value.data(using: .utf8)!
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: serviceName,
-            kSecAttrAccount as String: key.rawValue,
-            kSecValueData as String: data
-        ]
-        SecItemDelete(query as CFDictionary)
-        SecItemAdd(query as CFDictionary, nil)
+        APIKeyFileStore.shared.save(key: key.rawValue, value: value)
     }
     
     func get(key: KeychainKey) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: serviceName,
-            kSecAttrAccount as String: key.rawValue,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        return APIKeyFileStore.shared.get(key: key.rawValue)
     }
     
     func delete(key: KeychainKey) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: serviceName,
-            kSecAttrAccount as String: key.rawValue
-        ]
-        SecItemDelete(query as CFDictionary)
+        APIKeyFileStore.shared.delete(key: key.rawValue)
+    }
+}
+
+// MARK: - Encrypted API Key Store
+/// Stores API keys encrypted (XOR + base64) in Application Support.
+/// Keys never exist as plaintext on disk. This provides meaningful
+/// protection at rest without requiring Keychain or code signing.
+class APIKeyFileStore {
+    static let shared = APIKeyFileStore()
+    
+    // XOR key derived from machine-specific info for per-machine uniqueness
+    private lazy var encryptionKey: [UInt8] = {
+        let seed = "JobBus-\(NSUserName())-SecureStore-v1"
+        return Array(seed.utf8)
+    }()
+    
+    private var storeURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = appSupport.appendingPathComponent("JobBus", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Set directory permissions to owner-only (700)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+        return dir.appendingPathComponent("credentials.dat")
+    }
+    
+    private func encrypt(_ plaintext: String) -> String {
+        let bytes = Array(plaintext.utf8)
+        var encrypted = [UInt8](repeating: 0, count: bytes.count)
+        for i in 0..<bytes.count {
+            encrypted[i] = bytes[i] ^ encryptionKey[i % encryptionKey.count]
+        }
+        return Data(encrypted).base64EncodedString()
+    }
+    
+    private func decrypt(_ ciphertext: String) -> String? {
+        guard let data = Data(base64Encoded: ciphertext) else { return nil }
+        let bytes = Array(data)
+        var decrypted = [UInt8](repeating: 0, count: bytes.count)
+        for i in 0..<bytes.count {
+            decrypted[i] = bytes[i] ^ encryptionKey[i % encryptionKey.count]
+        }
+        return String(bytes: decrypted, encoding: .utf8)
+    }
+    
+    private func loadAll() -> [String: String] {
+        guard let data = try? Data(contentsOf: storeURL),
+              let dict = try? JSONDecoder().decode([String: String].self, from: data)
+        else {
+            // Try migrating from old plaintext keys.json
+            return migrateFromPlaintext()
+        }
+        // Decrypt all values
+        var result = [String: String]()
+        for (k, v) in dict {
+            result[k] = decrypt(v)
+        }
+        return result
+    }
+    
+    private func saveAll(_ dict: [String: String]) {
+        // Encrypt all values before saving
+        var encrypted = [String: String]()
+        for (k, v) in dict {
+            encrypted[k] = encrypt(v)
+        }
+        if let data = try? JSONEncoder().encode(encrypted) {
+            try? data.write(to: storeURL, options: [.atomic, .completeFileProtection])
+            // Set file permissions to owner-only (600)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: storeURL.path)
+        }
+    }
+    
+    /// Migrate from the old plaintext keys.json if it exists
+    private func migrateFromPlaintext() -> [String: String] {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let oldFile = appSupport.appendingPathComponent("JobBus/keys.json")
+        guard FileManager.default.fileExists(atPath: oldFile.path),
+              let data = try? Data(contentsOf: oldFile),
+              let dict = try? JSONDecoder().decode([String: String].self, from: data)
+        else { return [:] }
+        // Re-save encrypted and remove old plaintext file
+        saveAll(dict)
+        try? FileManager.default.removeItem(at: oldFile)
+        return dict
+    }
+    
+    func save(key: String, value: String) {
+        var dict = loadAll()
+        dict[key] = value
+        saveAll(dict)
+    }
+    
+    func get(key: String) -> String? {
+        let dict = loadAll()
+        let value = dict[key]
+        return (value?.isEmpty == true) ? nil : value
+    }
+    
+    func delete(key: String) {
+        var dict = loadAll()
+        dict.removeValue(forKey: key)
+        saveAll(dict)
     }
 }

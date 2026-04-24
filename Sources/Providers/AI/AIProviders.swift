@@ -19,7 +19,7 @@ class OllamaProvider: AIProvider {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 120
+        request.timeoutInterval = 60
         let body: [String: Any] = [
             "model": model, "prompt": prompt, "stream": false,
             "options": ["temperature": 0.7, "top_p": 0.9, "num_predict": 1024]
@@ -45,30 +45,124 @@ class OllamaProvider: AIProvider {
 class GeminiFlashProvider: AIProvider {
     let name = "Gemini Flash"
     let providerType: AIProviderType = .gemini
+    
     private var apiKey: String { KeychainService.shared.get(key: .geminiApiKey) ?? "" }
     
+    // Models to try in order (different quota buckets)
+    private let models = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"]
+    
     func generate(prompt: String) async throws -> String {
-        guard !apiKey.isEmpty else { throw ProviderError.notConfigured("Gemini API key not set") }
-        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\(apiKey)")!
+        guard !apiKey.isEmpty else { throw ProviderError.notConfigured("Gemini API key not set. Go to Settings → Providers to add your key from aistudio.google.com/apikey") }
+        
+        var lastError: Error?
+        
+        for model in models {
+            do {
+                return try await callModel(model: model, prompt: prompt)
+            } catch ProviderError.rateLimited(let msg) {
+                // Try next model (different quota bucket)
+                lastError = ProviderError.rateLimited(msg)
+                continue
+            } catch {
+                throw error
+            }
+        }
+        
+        throw lastError ?? ProviderError.serviceUnavailable("All Gemini models exhausted")
+    }
+    
+    private func callModel(model: String, prompt: String) async throws -> String {
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 30
+        request.timeoutInterval = 60
         let body: [String: Any] = [
             "contents": [["parts": [["text": prompt]]]],
             "generationConfig": ["temperature": 0.7, "topP": 0.9, "maxOutputTokens": 1024]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw ProviderError.invalidApiKey
+        
+        guard let http = response as? HTTPURLResponse else {
+            throw ProviderError.serviceUnavailable("No response from Gemini")
         }
+        
+        // Handle non-200 responses with actual error info
+        if http.statusCode != 200 {
+            let errorBody = String(data: data, encoding: .utf8) ?? ""
+            
+            switch http.statusCode {
+            case 429:
+                throw ProviderError.rateLimited("Gemini quota exceeded for \(model). Retrying with fallback model...")
+            case 401, 403:
+                throw ProviderError.invalidApiKey
+            default:
+                throw ProviderError.serviceUnavailable("Gemini returned \(http.statusCode): \(errorBody.prefix(200))")
+            }
+        }
+        
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let candidates = json["candidates"] as? [[String: Any]],
               let content = candidates.first?["content"] as? [String: Any],
               let parts = content["parts"] as? [[String: Any]],
               let text = parts.first?["text"] as? String
         else { throw ProviderError.parseError("Invalid Gemini response") }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    func isAvailable() async -> Bool { !apiKey.isEmpty }
+}
+
+// MARK: - Groq AI Provider
+class GroqProvider: AIProvider {
+    let name = "Groq"
+    let providerType: AIProviderType = .groq
+    
+    private var apiKey: String { KeychainService.shared.get(key: .groqApiKey) ?? "" }
+    
+    func generate(prompt: String) async throws -> String {
+        let key = apiKey
+        guard !key.isEmpty else { throw ProviderError.notConfigured("Groq API key not set. Go to Settings → Providers to add your key.") }
+        
+        let url = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 60
+        
+        let body: [String: Any] = [
+            "model": "llama-3.1-8b-instant",
+            "messages": [["role": "user", "content": prompt]],
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "max_tokens": 1024
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let http = response as? HTTPURLResponse else {
+            throw ProviderError.serviceUnavailable("No response from Groq")
+        }
+        
+        if http.statusCode != 200 {
+            let errorBody = String(data: data, encoding: .utf8) ?? ""
+            switch http.statusCode {
+            case 429:
+                throw ProviderError.rateLimited("Groq rate limit exceeded. Please wait a moment and try again.")
+            case 401, 403:
+                throw ProviderError.invalidApiKey
+            default:
+                throw ProviderError.serviceUnavailable("Groq returned \(http.statusCode): \(errorBody.prefix(200))")
+            }
+        }
+        
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = json["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let text = message["content"] as? String
+        else { throw ProviderError.parseError("Invalid Groq response") }
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     

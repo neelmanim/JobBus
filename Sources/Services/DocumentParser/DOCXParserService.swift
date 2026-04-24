@@ -36,58 +36,60 @@ class DOCXParserService {
     }
     
     private func extractTextFromWordXML(_ data: Data) -> String {
-        guard let xmlString = String(data: data, encoding: .utf8) else { return "" }
+        guard String(data: data, encoding: .utf8) != nil else { return "" }
         
-        // Extract text from <w:t> tags and <w:p> (paragraph) boundaries
-        var result = ""
-        var inTextTag = false
-        var currentText = ""
-        var i = xmlString.startIndex
-        
-        while i < xmlString.endIndex {
-            let remaining = xmlString[i...]
-            
-            if remaining.hasPrefix("<w:t") {
-                // Find the end of the opening tag
-                if let closeIndex = remaining.firstIndex(of: ">") {
-                    i = xmlString.index(after: closeIndex)
-                    inTextTag = true
-                    continue
-                }
-            }
-            
-            if remaining.hasPrefix("</w:t>") {
-                inTextTag = false
-                result += currentText
-                currentText = ""
-                i = xmlString.index(i, offsetBy: 6)
-                continue
-            }
-            
-            if remaining.hasPrefix("</w:p>") {
-                result += "\n"
-                i = xmlString.index(i, offsetBy: 6)
-                continue
-            }
-            
-            if remaining.hasPrefix("<w:tab/>") || remaining.hasPrefix("<w:tab />") {
-                result += "\t"
-                i = xmlString.index(i, offsetBy: remaining.hasPrefix("<w:tab/>") ? 8 : 9)
-                continue
-            }
-            
-            if inTextTag {
-                currentText += String(xmlString[i])
-            }
-            
-            i = xmlString.index(after: i)
-        }
+        // Use XMLParser for safe, linear-time extraction instead of
+        // character-by-character String.Index walking (which is O(n²) on
+        // Unicode-correct Swift strings and was the main freeze/crash cause).
+        let delegate = WordXMLParserDelegate()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+        parser.parse()
         
         // Clean up excessive whitespace while preserving paragraph breaks
-        let lines = result.components(separatedBy: "\n")
+        let lines = delegate.result
+            .components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         
         return lines.joined(separator: "\n")
+    }
+}
+
+// MARK: - XML Parser Delegate (linear-time, memory-safe)
+private class WordXMLParserDelegate: NSObject, XMLParserDelegate {
+    var result = ""
+    private var inTextTag = false
+    private var currentText = ""
+    
+    func parser(_ parser: XMLParser, didStartElement elementName: String,
+                namespaceURI: String?, qualifiedName: String?,
+                attributes: [String: String] = [:]) {
+        // <w:t> or just <t> depending on namespace handling
+        if elementName == "w:t" || elementName == "t" {
+            inTextTag = true
+            currentText = ""
+        } else if elementName == "w:tab" || elementName == "tab" {
+            result += "\t"
+        } else if elementName == "w:br" || elementName == "br" {
+            result += "\n"
+        }
+    }
+    
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        if inTextTag {
+            currentText += string
+        }
+    }
+    
+    func parser(_ parser: XMLParser, didEndElement elementName: String,
+                namespaceURI: String?, qualifiedName: String?) {
+        if elementName == "w:t" || elementName == "t" {
+            result += currentText
+            inTextTag = false
+            currentText = ""
+        } else if elementName == "w:p" || elementName == "p" {
+            result += "\n"
+        }
     }
 }

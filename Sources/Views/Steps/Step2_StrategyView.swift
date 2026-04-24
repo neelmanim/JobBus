@@ -147,18 +147,35 @@ struct Step2_StrategyView: View {
                     .padding(.horizontal, 40)
                 }
                 
-                // Search Button
-                Button {
-                    Task { await vm.searchContacts() }
-                } label: {
-                    Label("Find Contacts", systemImage: "magnifyingglass")
-                        .font(.body.bold())
-                        .padding(.horizontal, 40)
-                        .padding(.vertical, 14)
+                // Action Buttons
+                HStack(spacing: 16) {
+                    Button {
+                        Task { await vm.searchContacts() }
+                    } label: {
+                        Label("Find Contacts", systemImage: "magnifyingglass")
+                            .font(.body.bold())
+                            .padding(.horizontal, 32)
+                            .padding(.vertical, 14)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color(hex: "#8b5cf6"))
+                    .disabled(vm.isLoading)
+                    
+                    Button {
+                        vm.currentStep = .contacts
+                    } label: {
+                        Label("Skip → Manual Upload", systemImage: "tray.and.arrow.down.fill")
+                            .font(.body.bold())
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 14)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color(hex: "#10b981"))
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Color(hex: "#8b5cf6"))
-                .disabled(vm.isLoading)
+                
+                Text("Use 'Skip' to add contacts via CSV import or manual entry")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 
                 if vm.isLoading {
                     VStack(spacing: 8) {
