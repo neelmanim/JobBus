@@ -1,4 +1,6 @@
 import Foundation
+import Security
+import LocalAuthentication
 
 // MARK: - Provider Configuration
 enum SearchProviderType: String, Codable, CaseIterable, Identifiable {
@@ -245,12 +247,13 @@ class AppSettings: ObservableObject, Codable {
     }
 }
 
-// MARK: - Keychain Service
-/// Stores credentials in a file-based store under Application Support.
-/// We avoid macOS Keychain APIs entirely because unsigned apps trigger
-/// a system password dialog on every read/write, blocking the user.
+// MARK: - Keychain Service (Touch ID + Keychain)
+/// Uses macOS Keychain with Touch ID biometric protection.
+/// Falls back to encrypted file store if Keychain is unavailable.
 class KeychainService {
     static let shared = KeychainService()
+    
+    private let serviceName = "com.jobbus.credentials"
     
     enum KeychainKey: String {
         case apolloApiKey = "apollo_api_key"
@@ -261,16 +264,119 @@ class KeychainService {
         case smtpPassword = "smtp_password"
     }
     
+    // MARK: - Save (Keychain with Touch ID)
+    
     func save(key: KeychainKey, value: String) {
-        APIKeyFileStore.shared.save(key: key.rawValue, value: value)
+        guard !value.isEmpty else {
+            delete(key: key)
+            return
+        }
+        guard let data = value.data(using: .utf8) else { return }
+        
+        // Delete existing item first
+        deleteFromKeychain(account: key.rawValue)
+        
+        // Create access control requiring biometry (Touch ID)
+        var accessError: Unmanaged<CFError>?
+        guard let accessControl = SecAccessControlCreateWithFlags(
+            kCFAllocatorDefault,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            .biometryCurrentSet,
+            &accessError
+        ) else {
+            // Biometry not available — fall back to basic Keychain
+            saveWithoutBiometry(key: key, data: data)
+            return
+        }
+        
+        let context = LAContext()
+        context.localizedReason = "Save API key securely"
+        
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: key.rawValue,
+            kSecValueData as String: data,
+            kSecAttrAccessControl as String: accessControl,
+            kSecUseAuthenticationContext as String: context
+        ]
+        
+        let status = SecItemAdd(query as CFDictionary, nil)
+        if status != errSecSuccess {
+            // Keychain failed — fall back to encrypted file store
+            APIKeyFileStore.shared.save(key: key.rawValue, value: value)
+        }
     }
+    
+    // MARK: - Get (Keychain with Touch ID prompt)
     
     func get(key: KeychainKey) -> String? {
-        return APIKeyFileStore.shared.get(key: key.rawValue)
+        let context = LAContext()
+        context.localizedReason = "Access API key"
+        
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: key.rawValue,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationContext as String: context
+        ]
+        
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        
+        if status == errSecSuccess, let data = item as? Data,
+           let value = String(data: data, encoding: .utf8), !value.isEmpty {
+            return value
+        }
+        
+        // Keychain miss — check encrypted file store (migration path)
+        if let fileValue = APIKeyFileStore.shared.get(key: key.rawValue) {
+            // Migrate from file store to Keychain for next time
+            save(key: key, value: fileValue)
+            APIKeyFileStore.shared.delete(key: key.rawValue)
+            return fileValue
+        }
+        
+        return nil
     }
     
+    // MARK: - Delete
+    
     func delete(key: KeychainKey) {
+        deleteFromKeychain(account: key.rawValue)
         APIKeyFileStore.shared.delete(key: key.rawValue)
+    }
+    
+    // MARK: - Private Helpers
+    
+    private func deleteFromKeychain(account: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+    
+    /// Fallback: save to Keychain without biometric requirement
+    private func saveWithoutBiometry(key: KeychainKey, data: Data) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: key.rawValue,
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        ]
+        
+        let status = SecItemAdd(query as CFDictionary, nil)
+        if status != errSecSuccess {
+            // All Keychain paths failed — use encrypted file store
+            if let value = String(data: data, encoding: .utf8) {
+                APIKeyFileStore.shared.save(key: key.rawValue, value: value)
+            }
+        }
     }
 }
 

@@ -10,6 +10,10 @@ class SMTPEmailProvider: EmailSenderProvider {
     
     private var password: String { KeychainService.shared.get(key: .smtpPassword) ?? "" }
     
+    private var isLocalhost: Bool {
+        host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0"
+    }
+    
     init(providerType: EmailProviderType, customHost: String = "", customPort: Int = 587) {
         self.providerType = providerType
         self.name = providerType.rawValue
@@ -19,8 +23,11 @@ class SMTPEmailProvider: EmailSenderProvider {
     
     func send(to: String, toName: String, from: String, fromName: String,
               subject: String, textBody: String, htmlBody: String) async throws -> SendResult {
-        guard !password.isEmpty else { throw ProviderError.notConfigured("SMTP password not set") }
-        guard !from.isEmpty else { throw ProviderError.notConfigured("Sender email not set") }
+        // For localhost/MailHog: no password required
+        if !isLocalhost {
+            guard !password.isEmpty else { throw ProviderError.notConfigured("SMTP password not set. Go to Settings → Email to add your password.") }
+        }
+        guard !from.isEmpty else { throw ProviderError.notConfigured("Sender email not set. Go to Settings → Email to set your email address.") }
         
         return try await withCheckedThrowingContinuation { continuation in
             let queue = DispatchQueue(label: "smtp.send")
@@ -28,8 +35,17 @@ class SMTPEmailProvider: EmailSenderProvider {
                 do {
                     let smtp = SMTPClient(host: self.host, port: self.port)
                     try smtp.connect()
-                    try smtp.startTLS()
-                    try smtp.authenticate(user: from, password: self.password)
+                    
+                    // Skip TLS for localhost (MailHog / test servers)
+                    if !self.isLocalhost {
+                        try smtp.startTLS()
+                    }
+                    
+                    // Skip auth for servers that don't need it (MailHog)
+                    if !self.password.isEmpty {
+                        try smtp.authenticate(user: from, password: self.password)
+                    }
+                    
                     let mime = self.buildMIME(
                         from: from, fromName: fromName,
                         to: to, toName: toName,
