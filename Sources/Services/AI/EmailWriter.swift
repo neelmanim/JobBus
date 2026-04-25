@@ -4,8 +4,8 @@ import Foundation
 class EmailWriter {
     
     func compose(contact: Contact, resume: ResumeProfile,
-                 ai: AIProvider) async throws -> EmailDraft {
-        let prompt = buildPrompt(contact: contact, resume: resume)
+                 ai: AIProvider, customInstructions: String = "") async throws -> EmailDraft {
+        let prompt = buildPrompt(contact: contact, resume: resume, customInstructions: customInstructions)
         let response = try await ai.generate(prompt: prompt)
         
         let (subject, body) = parseEmailResponse(response)
@@ -39,12 +39,24 @@ class EmailWriter {
         return draft
     }
     
-    private func buildPrompt(contact: Contact, resume: ResumeProfile) -> String {
+    private func buildPrompt(contact: Contact, resume: ResumeProfile, customInstructions: String = "") -> String {
         let companyInfo: String
         if contact.company.isEmpty {
             companyInfo = "(Company unknown — do NOT use placeholders like [Company Name]. Instead, reference their role or industry.)"
         } else {
             companyInfo = contact.company
+        }
+        
+        let customBlock: String
+        if !customInstructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            customBlock = """
+            
+            ADDITIONAL INSTRUCTIONS FROM USER:
+            \(customInstructions)
+            
+            """
+        } else {
+            customBlock = ""
         }
         
         return """
@@ -67,7 +79,7 @@ class EmailWriter {
         
         INSTRUCTIONS FOR \(contact.recipientType.label.uppercased()):
         \(contact.recipientType.writingInstructions)
-        
+        \(customBlock)
         ABSOLUTE RULES:
         1. Email must be under 150 words (body only, excluding signature)
         2. Use the recipient's FIRST NAME only (not full name, not "Dear")

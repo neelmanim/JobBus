@@ -133,13 +133,16 @@ class AppSettings: ObservableObject, Codable {
     @Published var ollamaModel: String
     @Published var ollamaBaseURL: String
     
+    // Custom prompt instructions
+    @Published var customPromptInstructions: String
+    
     enum CodingKeys: CodingKey {
         case searchProvider, aiProvider, emailProvider
         case smtpEmail, smtpDisplayName, customSmtpHost, customSmtpPort
         case delaySeconds, maxPerDay, businessHoursOnly, businessHoursStart, businessHoursEnd
         case warmUpEnabled, contactCount, sandboxMode, sandboxHost, sandboxPort
         case signatureName, signatureTitle, signatureLinkedin, signaturePhone
-        case ollamaModel, ollamaBaseURL
+        case ollamaModel, ollamaBaseURL, customPromptInstructions
     }
     
     init() {
@@ -166,6 +169,7 @@ class AppSettings: ObservableObject, Codable {
         self.signaturePhone = ""
         self.ollamaModel = "llama3.1:8b"
         self.ollamaBaseURL = "http://localhost:11434"
+        self.customPromptInstructions = ""
     }
     
     required init(from decoder: Decoder) throws {
@@ -193,6 +197,7 @@ class AppSettings: ObservableObject, Codable {
         signaturePhone = try c.decodeIfPresent(String.self, forKey: .signaturePhone) ?? ""
         ollamaModel = try c.decodeIfPresent(String.self, forKey: .ollamaModel) ?? "llama3.1:8b"
         ollamaBaseURL = try c.decodeIfPresent(String.self, forKey: .ollamaBaseURL) ?? "http://localhost:11434"
+        customPromptInstructions = try c.decodeIfPresent(String.self, forKey: .customPromptInstructions) ?? ""
     }
     
     func encode(to encoder: Encoder) throws {
@@ -220,6 +225,7 @@ class AppSettings: ObservableObject, Codable {
         try c.encode(signaturePhone, forKey: .signaturePhone)
         try c.encode(ollamaModel, forKey: .ollamaModel)
         try c.encode(ollamaBaseURL, forKey: .ollamaBaseURL)
+        try c.encode(customPromptInstructions, forKey: .customPromptInstructions)
     }
     
     // MARK: - Persistence

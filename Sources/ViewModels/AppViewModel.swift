@@ -395,7 +395,7 @@ class AppViewModel: ObservableObject {
                 log.info("Generating draft \(index + 1)/\(total): \(contact.fullName) <\(contact.email)> @ \(contact.company)")
                 
                 do {
-                    var draft = try await emailWriter.compose(contact: contact, resume: profile, ai: aiProvider)
+                    var draft = try await emailWriter.compose(contact: contact, resume: profile, ai: aiProvider, customInstructions: settings.customPromptInstructions)
                     
                     // ── Validate AI output — catch truly empty/template responses ──
                     let bodyText = draft.body.trimmingCharacters(in: .whitespacesAndNewlines)
