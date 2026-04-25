@@ -119,7 +119,14 @@ class SMTPEmailProvider: EmailSenderProvider {
             // Part 2: File attachment
             if let url = attachmentURL, let fileData = try? Data(contentsOf: url) {
                 let filename = url.lastPathComponent
-                let mimeType = filename.hasSuffix(".pdf") ? "application/pdf" : "application/octet-stream"
+                let ext = url.pathExtension.lowercased()
+                let mimeType: String
+                switch ext {
+                case "pdf": mimeType = "application/pdf"
+                case "docx": mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                case "doc": mimeType = "application/msword"
+                default: mimeType = "application/octet-stream"
+                }
                 let base64 = fileData.base64EncodedString(options: .lineLength76Characters)
                 
                 mime += "--\(boundary)\r\n"

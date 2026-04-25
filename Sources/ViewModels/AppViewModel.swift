@@ -147,7 +147,23 @@ class AppViewModel: ObservableObject {
             loadingMessage = "AI analyzing your resume..."
             let profile = try await resumeAnalyzer.analyze(resumeText: text, ai: aiProvider)
             self.resumeProfile = profile
-            self.resumeFileURL = url  // Store for email attachment
+            
+            // Copy resume to app support so it's always accessible for SMTP attachment
+            // (file picker URLs are security-scoped and expire after the session)
+            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            let jobBusDir = appSupport.appendingPathComponent("JobBus", isDirectory: true)
+            try? FileManager.default.createDirectory(at: jobBusDir, withIntermediateDirectories: true)
+            let destURL = jobBusDir.appendingPathComponent("resume_attachment.\(url.pathExtension)")
+            try? FileManager.default.removeItem(at: destURL)
+            do {
+                _ = url.startAccessingSecurityScopedResource()
+                try FileManager.default.copyItem(at: url, to: destURL)
+                url.stopAccessingSecurityScopedResource()
+                self.resumeFileURL = destURL
+            } catch {
+                // Fallback: use original URL (may work for non-sandboxed access)
+                self.resumeFileURL = url
+            }
             
             loadingMessage = "Generating search strategy..."
             let strategy = try await resumeAnalyzer.generateStrategy(from: profile, ai: aiProvider)
