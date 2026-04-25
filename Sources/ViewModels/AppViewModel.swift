@@ -63,6 +63,9 @@ class AppViewModel: ObservableObject {
         // Load cached contacts from previous session
         loadCachedContacts()
         
+        // Restore resume attachment URL if a cached copy exists
+        restoreCachedResumeURL()
+        
         requestNotificationPermission()
     }
     
@@ -526,7 +529,8 @@ class AppViewModel: ObservableObject {
                     if campaignStatus == .stopped { break }
                 }
                 
-                loadingMessage = "Sending \(sentCount + 1)/\(approvedDrafts.count) — \(draft.recipientName)..."
+                let attachmentInfo = resumeFileURL != nil ? " 📎" : ""
+                loadingMessage = "Sending \(sentCount + 1)/\(approvedDrafts.count) — \(draft.recipientName)\(attachmentInfo)..."
                 
                 // Send (with resume attached if available)
                 let result = try? await emailSender.send(
@@ -700,6 +704,23 @@ class AppViewModel: ObservableObject {
     func clearContactsCache() {
         try? FileManager.default.removeItem(at: Self.contactsCacheURL)
         contacts = []
+    }
+    
+    /// Restore the resume attachment URL from a previous session.
+    /// The resume is copied to Application Support on first parse,
+    /// but resumeFileURL (@Published) is lost on app restart.
+    private func restoreCachedResumeURL() {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let jobBusDir = appSupport.appendingPathComponent("JobBus", isDirectory: true)
+        
+        // Check common resume extensions
+        for ext in ["pdf", "docx", "doc"] {
+            let url = jobBusDir.appendingPathComponent("resume_attachment.\(ext)")
+            if FileManager.default.fileExists(atPath: url.path) {
+                self.resumeFileURL = url
+                return
+            }
+        }
     }
 }
 
