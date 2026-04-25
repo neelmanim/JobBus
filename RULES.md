@@ -50,6 +50,9 @@ feature-branch → develop → main
 5. **Sandbox-first** — Sandbox mode is ON by default. Must be explicitly disabled before real emails can be sent.
 6. **Application-wide logging** — Thread-safe `AppLogger` writes to both console and timestamped rolling log files in `~/Library/Application Support/JobBus/logs/`. Keeps last 20 sessions.
 7. **Custom AI prompt support** — Users can inject custom instructions into the email generation prompt via Settings → AI Prompt tab.
+8. **Thin coordinator pattern** — `AppViewModel` is a UI coordinator (~430 lines). Business logic is decomposed into `ContactManager`, `DraftManager`, and `SendEngine`.
+9. **Campaign intelligence** — Pre-send analysis (0-100 score) with risk indicators and suggestions. Warn-only — never blocks sending.
+10. **Achievement rotation** — Round-robin achievement selection for email personalization. No hard-blocking on exhaustion.
 
 ### Source Structure
 
@@ -81,10 +84,17 @@ Sources/
 │   │   ├── DOCXParserService.swift          # DOCX via ZIP extraction of word/document.xml
 │   │   └── PDFParserService.swift           # PDF via Apple PDFKit
 │   ├── Import/CSVImporter.swift             # CSV with auto-detect delimiter/columns/encoding
-│   └── Safety/QualityScorer.swift           # 8-point scorer + duplicate detector
+│   └── Safety/
+│       ├── QualityScorer.swift              # 11-point scorer + duplicate detector
+│       └── CampaignIntelligence.swift       # Pre-send campaign analysis (0-100 score, risks, suggestions)
+│
+├── Managers/
+│   ├── ContactManager.swift                 # Search, CSV import, deduplication, relevance scoring
+│   ├── DraftManager.swift                   # AI generation, achievement rotation, validation, progressive UI
+│   └── SendEngine.swift                     # Campaign execution, adaptive delays, duplicate prevention
 │
 ├── ViewModels/
-│   └── AppViewModel.swift                   # Central pipeline orchestrator (campaignTotal for stable progress)
+│   └── AppViewModel.swift                   # Thin UI coordinator (delegates to managers)
 │
 ├── Views/
 │   ├── MainView.swift                       # NavigationSplitView + sidebar steps
@@ -93,8 +103,8 @@ Sources/
 │       ├── Step1_ResumeView.swift           # Drop zone + AI analysis display
 │       ├── Step2_StrategyView.swift         # Filter builder + contact count slider
 │       ├── Step3_ContactsView.swift         # Multi-source table + CSV import + manual entry
-│       ├── Step4_DraftsView.swift           # Draft review + quality badges + edit/regenerate
-│       └── Step5_SendView.swift             # Campaign progress ring + controls (stable campaignTotal)
+│       ├── Step4_DraftsView.swift           # Draft review + quality bar + resume badges + edit/regenerate
+│       └── Step5_SendView.swift             # Campaign intelligence card + progress ring + controls
 │
 ├── Resources/
 │   └── AppIcon.png

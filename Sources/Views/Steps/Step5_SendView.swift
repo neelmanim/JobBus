@@ -95,12 +95,115 @@ struct Step5_SendView: View {
                 }
                 .padding(.horizontal, 40)
                 
+                // Campaign Intelligence Card (pre-send only)
+                if vm.campaignStatus == .idle && approvedCount > 0 {
+                    let intel = CampaignIntelligence.analyze(
+                        drafts: vm.drafts,
+                        contacts: vm.contacts,
+                        settings: vm.settings,
+                        resumeFileURL: vm.resumeFileURL
+                    )
+                    
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Image(systemName: "brain.head.profile")
+                                .font(.title3)
+                                .foregroundColor(Color(hex: "#8b5cf6"))
+                            Text("Campaign Intelligence")
+                                .font(.headline)
+                            Spacer()
+                            
+                            // Quality Score Ring
+                            ZStack {
+                                Circle()
+                                    .stroke(Color.gray.opacity(0.2), lineWidth: 4)
+                                Circle()
+                                    .trim(from: 0, to: Double(intel.qualityScore) / 100.0)
+                                    .stroke(
+                                        intel.qualityScore >= 70 ? Color(hex: "#10b981")
+                                        : intel.qualityScore >= 40 ? Color(hex: "#f59e0b")
+                                        : Color(hex: "#ef4444"),
+                                        style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                                    )
+                                    .rotationEffect(.degrees(-90))
+                                Text("\(intel.qualityScore)")
+                                    .font(.caption.bold().monospacedDigit())
+                            }
+                            .frame(width: 40, height: 40)
+                        }
+                        
+                        // Breakdown
+                        HStack(spacing: 16) {
+                            Label("\(intel.breakdown.totalApproved) emails", systemImage: "envelope")
+                            Label("\(intel.breakdown.resumeAttachCount) with resume", systemImage: "paperclip")
+                            if intel.breakdown.linkOnlyCount > 0 {
+                                Label("\(intel.breakdown.linkOnlyCount) link-only", systemImage: "link")
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        
+                        // Risk Indicators
+                        if !intel.riskIndicators.isEmpty {
+                            Divider()
+                            ForEach(intel.riskIndicators) { risk in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Image(systemName: risk.level.icon)
+                                        .foregroundColor(Color(hex: risk.level.colorHex))
+                                        .font(.caption)
+                                        .frame(width: 16)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(risk.title)
+                                            .font(.caption.bold())
+                                        Text(risk.detail)
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Suggestions
+                        if !intel.suggestions.isEmpty {
+                            Divider()
+                            ForEach(intel.suggestions) { suggestion in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Image(systemName: suggestion.icon)
+                                        .foregroundColor(Color(hex: "#3b82f6"))
+                                        .font(.caption)
+                                        .frame(width: 16)
+                                    Text(suggestion.text)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                    }
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(.regularMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .strokeBorder(
+                                        intel.qualityScore < 40 ? Color(hex: "#ef4444").opacity(0.3)
+                                        : Color.clear,
+                                        lineWidth: 1
+                                    )
+                            )
+                    )
+                    .padding(.horizontal, 40)
+                }
+                
                 // Config Summary
                 VStack(alignment: .leading, spacing: 8) {
                     Label("From: \(vm.settings.smtpEmail.isEmpty ? "Not configured" : vm.settings.smtpEmail)", systemImage: "envelope")
                     Label("Delay: \(Int(vm.settings.delaySeconds)) seconds between emails", systemImage: "timer")
                     Label("Schedule: \(vm.settings.businessHoursStart):00 - \(vm.settings.businessHoursEnd):00", systemImage: "clock")
                     Label("Daily limit: \(vm.settings.maxPerDay) emails", systemImage: "chart.bar")
+                    if let resumeURL = vm.resumeFileURL {
+                        Label("Resume: \(resumeURL.lastPathComponent)", systemImage: "doc.fill")
+                    }
                 }
                 .font(.callout)
                 .foregroundColor(.secondary)

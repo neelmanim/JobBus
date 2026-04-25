@@ -1,6 +1,8 @@
 import Foundation
 
 // MARK: - Quality Scorer
+/// Validates AI-generated email drafts across 11 quality dimensions.
+/// Upgraded from 8-point to include hook, achievement count, and opening checks.
 struct QualityScorer {
     
     private static let spamWords = [
@@ -26,6 +28,15 @@ struct QualityScorer {
         "i am a highly motivated professional"
     ]
     
+    private static let genericOpenings = [
+        "i came across your profile",
+        "i noticed your profile",
+        "i hope this finds you",
+        "i am writing to",
+        "i am reaching out",
+        "i wanted to reach out"
+    ]
+    
     static func score(draft: EmailDraft, contact: Contact) -> EmailQualityScore {
         let bodyLower = draft.body.lowercased()
         let subjectLower = draft.subject.lowercased()
@@ -39,7 +50,10 @@ struct QualityScorer {
             noPlaceholders: !placeholderPatterns.contains { bodyLower.contains($0.lowercased()) || subjectLower.contains($0.lowercased()) },
             noSpamWords: !spamWords.contains { bodyLower.contains($0) || subjectLower.contains($0) },
             hasCTA: detectCTA(bodyLower),
-            toneMatch: !weakPhrases.contains { bodyLower.contains($0) }
+            toneMatch: !weakPhrases.contains { bodyLower.contains($0) },
+            hookPresent: checkHookPresent(draft: draft, contact: contact),
+            singleAchievement: checkSingleAchievement(bodyLower),
+            noGenericOpening: !genericOpenings.contains { bodyLower.hasPrefix($0) || bodyLower.starts(with: $0) }
         )
     }
     
@@ -67,6 +81,36 @@ struct QualityScorer {
         return ctaPatterns.contains { body.contains($0) }
     }
     
+    /// Check if first line is about the recipient (contains their name or company)
+    private static func checkHookPresent(draft: EmailDraft, contact: Contact) -> Bool {
+        let lines = draft.body.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard let firstLine = lines.first?.lowercased() else { return false }
+        
+        // First line should reference the recipient or their company
+        let recipientName = contact.firstName.lowercased()
+        let companyName = contact.company.lowercased()
+        
+        if !recipientName.isEmpty && firstLine.contains(recipientName) { return true }
+        if !companyName.isEmpty && firstLine.contains(companyName) { return true }
+        
+        // Also pass if first word is NOT "I" (shows the email leads with the recipient)
+        let firstWord = firstLine.components(separatedBy: " ").first ?? ""
+        return firstWord != "i"
+    }
+    
+    /// Check that the email doesn't contain more than one quantified achievement.
+    /// Quantified = contains a number followed by a unit/descriptor (%, million, x, etc.)
+    private static func checkSingleAchievement(_ body: String) -> Bool {
+        let quantifiedPattern = #"\d+[%xX]|\d+\s*(million|billion|percent|users|customers|increase|decrease|improvement|reduction|growth)"#
+        guard let regex = try? NSRegularExpression(pattern: quantifiedPattern, options: .caseInsensitive) else {
+            return true // Can't check — assume OK
+        }
+        let matches = regex.numberOfMatches(in: body, range: NSRange(body.startIndex..., in: body))
+        return matches <= 2 // Allow up to 2 numbers (one achievement can have 2 metrics)
+    }
+    
     // MARK: - Issues Report
     
     static func issues(for score: EmailQualityScore) -> [String] {
@@ -79,6 +123,9 @@ struct QualityScorer {
         if !score.noSpamWords { issues.append("Email contains spam trigger words") }
         if !score.hasCTA { issues.append("Email lacks a clear call-to-action") }
         if !score.toneMatch { issues.append("Email uses overused/generic phrases") }
+        if !score.hookPresent { issues.append("Email doesn't start with a hook about the recipient") }
+        if !score.singleAchievement { issues.append("Email contains too many achievements — keep it to one") }
+        if !score.noGenericOpening { issues.append("Email starts with a generic opener (e.g., 'I came across your profile')") }
         return issues
     }
 }

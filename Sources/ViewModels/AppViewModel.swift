@@ -3,6 +3,8 @@ import UserNotifications
 import Combine
 
 // MARK: - App View Model
+/// Thin coordinator that owns all @Published UI state and delegates
+/// business logic to focused managers (ContactManager, DraftManager, SendEngine).
 @MainActor
 class AppViewModel: ObservableObject {
     @Published var currentStep: AppStep = .resume
@@ -45,13 +47,16 @@ class AppViewModel: ObservableObject {
     let resumeAnalyzer = ResumeAnalyzer()
     let emailWriter = EmailWriter()
     
+    // Managers (extracted business logic)
+    let contactManager = ContactManager()
+    let draftManager = DraftManager()
+    let sendEngine = SendEngine()
+    
     // Task handles for cancellation
-    private var generateTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
     
-    // Forward nested ObservableObject changes so SwiftUI sees them (fixes slider)
+    // Forward nested ObservableObject changes so SwiftUI sees them
     private var settingsSink: AnyCancellable?
-    private var sendTask: Task<Void, Never>?
     
     init() {
         self.settings = AppSettings.load()
@@ -62,7 +67,7 @@ class AppViewModel: ObservableObject {
         }
         
         // Load cached contacts from previous session
-        loadCachedContacts()
+        contacts = contactManager.loadCached()
         
         // Restore resume attachment URL if a cached copy exists
         restoreCachedResumeURL()
@@ -131,9 +136,7 @@ class AppViewModel: ObservableObject {
         canRetry = false
         
         do {
-            // Offload heavy file I/O to a background thread so the UI stays responsive.
-            // PDFKit text extraction and DOCX XML parsing are CPU-heavy and must not
-            // run on @MainActor — this was the primary cause of the app freeze/crash.
+            // Offload heavy file I/O to a background thread
             let pdfParser = self.pdfParser
             let docxParser = self.docxParser
             let fileExtension = url.pathExtension.lowercased()
@@ -166,7 +169,6 @@ class AppViewModel: ObservableObject {
             log.info("Skills: \(profile.skills.prefix(6).joined(separator: ", "))")
             
             // Copy resume to app support so it's always accessible for SMTP attachment
-            // (file picker URLs are security-scoped and expire after the session)
             let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             let jobBusDir = appSupport.appendingPathComponent("JobBus", isDirectory: true)
             try? FileManager.default.createDirectory(at: jobBusDir, withIntermediateDirectories: true)
@@ -179,7 +181,6 @@ class AppViewModel: ObservableObject {
                 self.resumeFileURL = destURL
                 log.info("Resume copied to: \(destURL.path)")
             } catch {
-                // Fallback: use original URL (may work for non-sandboxed access)
                 self.resumeFileURL = url
                 log.warn("Resume copy failed: \(error.localizedDescription), using original URL")
             }
@@ -245,7 +246,7 @@ class AppViewModel: ObservableObject {
         }
     }
     
-    // MARK: - Contact Search
+    // MARK: - Contact Search (delegates to ContactManager)
     
     func searchContacts() async {
         guard let strategy = searchStrategy else { return }
@@ -255,46 +256,38 @@ class AppViewModel: ObservableObject {
         isLoading = true
         loadingMessage = "Searching for contacts via \(settings.searchProvider.rawValue)..."
         canRetry = false
-        log.section("CONTACT SEARCH")
-        log.info("Provider: \(settings.searchProvider.rawValue), Count: \(settings.contactCount)")
         
         searchTask = Task {
             do {
-                let found = try await searchProvider.search(strategy: strategy, count: settings.contactCount)
+                let result = try await contactManager.search(
+                    strategy: strategy,
+                    count: settings.contactCount,
+                    provider: searchProvider,
+                    enrichment: enrichmentProvider,
+                    existingContacts: contacts,
+                    onProgress: { [weak self] msg in self?.loadingMessage = msg }
+                )
                 
-                // Check cancellation
-                try Task.checkCancellation()
-                
-                loadingMessage = "Enriching contacts to get emails..."
-                let enriched = try await enrichmentProvider.enrichBatch(contacts: found) { done, total in
-                    Task { @MainActor in
-                        self.loadingMessage = "Enriching contacts: \(done)/\(total)..."
-                    }
+                // Score relevance if we have a resume
+                if let resume = resumeProfile {
+                    contacts = contactManager.scoreRelevance(contacts: result.contacts, resume: resume)
+                } else {
+                    contacts = result.contacts
                 }
                 
-                // Check cancellation
-                try Task.checkCancellation()
-                
-                // Add to contacts pool (dedup with existing)
-                let allContacts = contacts + enriched
-                let (unique, dupes) = DuplicateDetector.removeDuplicates(from: allContacts)
-                contacts = unique
-                
-                // Cache contacts to disk for reuse
-                self.saveContactsCache()
-                log.info("Contacts found: \(enriched.count), unique: \(unique.count), dupes removed: \(dupes.count)")
+                contactManager.save(contacts)
                 
                 isSearching = false
                 isLoading = false
                 
-                if unique.isEmpty {
+                if result.contacts.isEmpty {
                     showError("No contacts found matching your search criteria.\n\nTry broadening your filters:\n• Add more target titles\n• Expand company size range\n• Add more locations\n\nOr use CSV Import / Manual Entry instead.")
                 } else {
                     currentStep = .contacts
-                    if dupes.count > 0 {
-                        showCompletionNotice("Found \(enriched.count) contacts (\(dupes.count) duplicates removed)")
+                    if result.dupesRemoved > 0 {
+                        showCompletionNotice("Found \(result.newCount) contacts (\(result.dupesRemoved) duplicates removed)")
                     } else {
-                        showCompletionNotice("Found \(enriched.count) contacts with verified emails")
+                        showCompletionNotice("Found \(result.newCount) contacts with verified emails")
                     }
                 }
             } catch is CancellationError {
@@ -333,29 +326,25 @@ class AppViewModel: ObservableObject {
         searchTask = nil
     }
     
-    // MARK: - CSV Import
+    // MARK: - CSV Import (delegates to ContactManager)
     
     func importCSV(from url: URL) {
         do {
-            let result = try csvImporter.parseCSV(from: url)
-            let allContacts = contacts + result.contacts
-            let (unique, _) = DuplicateDetector.removeDuplicates(from: allContacts)
-            contacts = unique
-            showCompletionNotice("Imported \(result.contacts.count) contacts from CSV")
+            let result = try contactManager.importCSV(from: url, existingContacts: contacts, csvImporter: csvImporter)
+            contacts = result.contacts
+            showCompletionNotice("Imported \(result.importedCount) contacts from CSV")
         } catch {
             showError(error.localizedDescription)
         }
     }
     
-    // MARK: - Manual Add
+    // MARK: - Manual Add (delegates to ContactManager)
     
     func addManualContact(_ contact: Contact) {
-        let allContacts = contacts + [contact]
-        let (unique, _) = DuplicateDetector.removeDuplicates(from: allContacts)
-        contacts = unique
+        contacts = contactManager.addManual(contact, existingContacts: contacts)
     }
     
-    // MARK: - Generate Drafts
+    // MARK: - Generate Drafts (delegates to DraftManager)
     
     func generateDrafts() async {
         guard let profile = resumeProfile else { return }
@@ -367,12 +356,10 @@ class AppViewModel: ObservableObject {
             return
         }
         
-        // ── Token conservation: skip contacts that already have valid drafts ──
+        // Check if all contacts already have drafts
         let existingContactIds = Set(drafts.filter { $0.status != .failed }.map { $0.contactId })
-        let contactsNeedingDrafts = selectedContacts.filter { !existingContactIds.contains($0.id) }
-        
-        // If all contacts already have drafts, just navigate — no AI calls needed
-        if contactsNeedingDrafts.isEmpty {
+        let needsDrafts = selectedContacts.filter { !existingContactIds.contains($0.id) }
+        if needsDrafts.isEmpty {
             currentStep = .drafts
             return
         }
@@ -381,129 +368,54 @@ class AppViewModel: ObservableObject {
         isLoading = true
         canRetry = false
         
-        // Preserve existing valid drafts, only regenerate for new/failed contacts
-        var updatedDrafts = drafts.filter { $0.status != .failed }
-        var failureCount = 0
-        let total = contactsNeedingDrafts.count
-        
-        generateTask = Task {
-            for (index, contact) in contactsNeedingDrafts.enumerated() {
-                // Check cancellation
-                if Task.isCancelled { break }
+        draftManager.generateDrafts(
+            selectedContacts: selectedContacts,
+            existingDrafts: drafts,
+            resume: profile,
+            ai: aiProvider,
+            emailWriter: emailWriter,
+            customInstructions: settings.customPromptInstructions,
+            aiProviderType: settings.aiProvider,
+            onProgress: { [weak self] msg in
+                self?.loadingMessage = msg
+            },
+            onDraftUpdate: { [weak self] updatedDrafts in
+                self?.drafts = updatedDrafts
+                if self?.currentStep != .drafts {
+                    self?.currentStep = .drafts
+                }
+            },
+            onComplete: { [weak self] total, failureCount, passedQuality in
+                guard let self = self else { return }
+                self.isGenerating = false
+                self.isLoading = false
                 
-                loadingMessage = "Composing email \(index + 1)/\(total) — \(contact.fullName) @ \(contact.company)..."
-                log.info("Generating draft \(index + 1)/\(total): \(contact.fullName) <\(contact.email)> @ \(contact.company)")
+                if total == 0 {
+                    // All contacts already had drafts — just navigate
+                    return
+                }
                 
-                do {
-                    var draft = try await emailWriter.compose(contact: contact, resume: profile, ai: aiProvider, customInstructions: settings.customPromptInstructions)
-                    
-                    // ── Validate AI output — catch truly empty/template responses ──
-                    let bodyText = draft.body.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let placeholders = ["[Company Name]", "[Your Name]", "[Position]", "[Role]", "[Name]", "[Title]", "[Company]"]
-                    let subjectHits = placeholders.filter { draft.subject.contains($0) }.count
-                    let bodyHits = placeholders.filter { bodyText.contains($0) }.count
-                    
-                    if bodyText.isEmpty || bodyText.count < 30 {
-                        // Truly empty — mark failed with diagnostic info
-                        var failedDraft = EmailDraft(contactId: contact.id)
-                        failedDraft.status = .failed
-                        failedDraft.recipientName = contact.fullName
-                        failedDraft.recipientEmail = contact.email
-                        failedDraft.recipientCompany = contact.company
-                        failedDraft.subject = "(Incomplete — AI returned empty response)"
-                        failedDraft.body = "The AI returned an empty or too-short response (\(bodyText.count) chars).\n\nSubject parsed: \"\(draft.subject)\"\nBody parsed: \"\(bodyText.prefix(100))\"\n\nTap Regenerate to try again, or Edit to write manually."
-                        updatedDrafts.append(failedDraft)
-                        failureCount += 1
-                        log.warn("Draft FAILED (empty): \(contact.fullName) — body=\(bodyText.count) chars, subject=\"\(draft.subject)\"")
-                    } else if (subjectHits + bodyHits) >= 2 {
-                        // Multiple placeholders — template response, reject
-                        var failedDraft = EmailDraft(contactId: contact.id)
-                        failedDraft.status = .failed
-                        failedDraft.recipientName = contact.fullName
-                        failedDraft.recipientEmail = contact.email
-                        failedDraft.recipientCompany = contact.company
-                        failedDraft.subject = "(Incomplete — AI returned placeholders)"
-                        failedDraft.body = "The AI returned a template with \(subjectHits + bodyHits) placeholders.\n\nTap Regenerate to try again, or Edit to write manually."
-                        updatedDrafts.append(failedDraft)
-                        failureCount += 1
-                    } else {
-                        // Valid (or close enough) — clean any stray single placeholder
-                        if subjectHits == 1 || bodyHits == 1 {
-                            let fill = contact.company.isEmpty ? "your team" : contact.company
-                            for p in placeholders {
-                                draft.subject = draft.subject.replacingOccurrences(of: p, with: fill)
-                                draft.body = draft.body.replacingOccurrences(of: p, with: fill)
-                            }
-                        }
-                        updatedDrafts.append(draft)
-                        log.info("Draft OK: \(contact.fullName) — subject=\"\(draft.subject)\", body=\(bodyText.count) chars, quality=\(draft.qualityScore.grade)")
+                if failureCount == total {
+                    self.showErrorWithRetry("All \(total) emails failed to generate.\n\nCheck your \(self.settings.aiProvider.rawValue) API key and connection, then try again.") {
+                        await self.generateDrafts()
                     }
-                    
-                    // Update drafts progressively so user sees them appear
-                    drafts = updatedDrafts
-                    
-                    // Navigate to drafts step after first successful draft
-                    if currentStep != .drafts {
-                        currentStep = .drafts
-                    }
-                } catch is CancellationError {
-                    break
-                } catch {
-                    failureCount += 1
-                    // Create a failed draft entry so user can see what went wrong
-                    var failedDraft = EmailDraft(contactId: contact.id)
-                    failedDraft.status = .failed
-                    failedDraft.recipientName = contact.fullName
-                    failedDraft.recipientEmail = contact.email
-                    failedDraft.recipientCompany = contact.company
-                    failedDraft.subject = "(Generation failed)"
-                    failedDraft.body = "Error: \(error.localizedDescription)\n\nUse the Regenerate button to try again."
-                    updatedDrafts.append(failedDraft)
-                    drafts = updatedDrafts
+                } else if failureCount > 0 {
+                    let successCount = total - failureCount
+                    self.showCompletionNotice("Generated \(successCount)/\(total) drafts. \(failureCount) failed. \(passedQuality) passed quality checks.")
+                    if self.currentStep != .drafts { self.currentStep = .drafts }
+                } else {
+                    self.showCompletionNotice("Generated \(total) drafts. \(passedQuality)/\(total) passed quality checks.")
+                    if self.currentStep != .drafts { self.currentStep = .drafts }
                 }
-                
-                // Smart delay between AI calls — provider-specific to avoid rate limits
-                let delayMs: Int
-                switch self.settings.aiProvider {
-                case .groq: delayMs = 2000    // Groq free tier: 30 RPM
-                case .gemini: delayMs = 500   // Gemini: generous limits
-                case .ollama: delayMs = 200   // Local: no limits
-                }
-                try? await Task.sleep(for: .milliseconds(delayMs))
             }
-            
-            isGenerating = false
-            isLoading = false
-            
-            if Task.isCancelled {
-                // Keep whatever we generated so far
-                showCompletionNotice("Generation cancelled. \(updatedDrafts.count) drafts saved.")
-            } else if failureCount == total {
-                // All failed
-                showErrorWithRetry("All \(total) emails failed to generate.\n\nCheck your \(settings.aiProvider.rawValue) API key and connection, then try again.") {
-                    await self.generateDrafts()
-                }
-            } else if failureCount > 0 {
-                // Partial failure
-                let successCount = total - failureCount
-                let passedQuality = updatedDrafts.filter { $0.qualityScore.grade != .poor && $0.status != .failed }.count
-                showCompletionNotice("Generated \(successCount)/\(total) drafts. \(failureCount) failed. \(passedQuality) passed quality checks.")
-                if currentStep != .drafts { currentStep = .drafts }
-            } else {
-                // All succeeded
-                let passedQuality = updatedDrafts.filter { $0.qualityScore.grade != .poor }.count
-                showCompletionNotice("Generated \(total) drafts. \(passedQuality)/\(total) passed quality checks.")
-                if currentStep != .drafts { currentStep = .drafts }
-            }
-        }
+        )
     }
     
     func cancelGeneration() {
-        generateTask?.cancel()
-        generateTask = nil
+        draftManager.cancelGeneration()
     }
     
-    // MARK: - Campaign Sending
+    // MARK: - Campaign Sending (delegates to SendEngine)
     
     func startCampaign() {
         guard campaignStatus != .running else { return }
@@ -517,129 +429,95 @@ class AppViewModel: ObservableObject {
         guard !approvedDrafts.isEmpty else {
             showError("No approved emails to send.\n\nGo back to Compose and approve at least one email draft.")
             campaignStatus = .idle
-            log.warn("Campaign aborted: no approved drafts")
             return
         }
         
-        log.section("CAMPAIGN START")
-        log.info("Total to send: \(approvedDrafts.count)")
-        log.info("SMTP: \(settings.smtpEmail) → \(settings.sandboxMode ? "SANDBOX (localhost:\(settings.sandboxPort))" : "LIVE")")
-        log.info("Attachment: \(resumeFileURL?.lastPathComponent ?? "none")")
-        log.info("Delay: \(Int(settings.delaySeconds))s between emails")
+        postSystemNotification(title: "Campaign Started", body: "Sending \(approvedDrafts.count) emails...")
         
-        sendTask = Task {
-            for (index, draft) in approvedDrafts.enumerated() {
-                // Check pause/stop
-                while campaignStatus == .paused {
-                    try? await Task.sleep(for: .seconds(1))
+        sendEngine.startCampaign(
+            drafts: drafts,
+            sender: emailSender,
+            settings: settings,
+            resumeFileURL: resumeFileURL,
+            onStatusChange: { [weak self] status in
+                self?.campaignStatus = status
+            },
+            onSent: { [weak self] draftId, smtpResponse in
+                guard let self = self else { return }
+                self.sentCount += 1
+                if let idx = self.drafts.firstIndex(where: { $0.id == draftId }) {
+                    self.drafts[idx].status = .sent
                 }
-                if campaignStatus == .stopped || Task.isCancelled { break }
-                
-                // Business hours check
-                if settings.businessHoursOnly {
-                    await waitForBusinessHours()
+                self.sendRecords.append(SendRecord(
+                    draftId: draftId,
+                    recipientEmail: self.drafts.first(where: { $0.id == draftId })?.recipientEmail ?? "",
+                    recipientName: self.drafts.first(where: { $0.id == draftId })?.recipientName ?? "",
+                    subject: self.drafts.first(where: { $0.id == draftId })?.subject ?? "",
+                    sentAt: Date(),
+                    status: .sent,
+                    smtpResponse: smtpResponse
+                ))
+            },
+            onFailed: { [weak self] draftId, errorMessage in
+                guard let self = self else { return }
+                self.failedCount += 1
+                if let idx = self.drafts.firstIndex(where: { $0.id == draftId }) {
+                    self.drafts[idx].status = .failed
                 }
-                
-                // Daily limit check
-                if sentCount >= settings.maxPerDay {
-                    campaignStatus = .paused
-                    loadingMessage = "Daily limit reached (\(settings.maxPerDay)). Will resume tomorrow."
-                    postSystemNotification(title: "Campaign Paused", body: "Daily send limit of \(settings.maxPerDay) reached.")
-                    break
-                }
-                
-                // First-3 hold: pause after sending 3 so user can verify
-                if index == 3 && sentCount == 3 {
-                    campaignStatus = .paused
-                    loadingMessage = "Sent 3 emails. Check your Sent folder — do they look right? Resume when ready."
-                    postSystemNotification(title: "Campaign Paused", body: "Sent 3 test emails. Check your Sent folder and resume when ready.")
-                    while campaignStatus == .paused {
-                        try? await Task.sleep(for: .seconds(1))
-                    }
-                    if campaignStatus == .stopped { break }
-                }
-                
-                let attachmentInfo = resumeFileURL != nil ? " 📎" : ""
-                loadingMessage = "Sending \(sentCount + 1)/\(approvedDrafts.count) — \(draft.recipientName)\(attachmentInfo)..."
-                
-                // Send (with resume attached if available)
-                let result = try? await emailSender.send(
-                    to: draft.recipientEmail,
-                    toName: draft.recipientName,
-                    from: settings.smtpEmail,
-                    fromName: settings.smtpDisplayName,
-                    subject: draft.subject,
-                    textBody: draft.body,
-                    htmlBody: draft.htmlBody,
-                    attachmentURL: resumeFileURL
-                )
-                
-                if result?.success == true {
-                    sentCount += 1
-                    // Update draft status
-                    if let draftIdx = drafts.firstIndex(where: { $0.id == draft.id }) {
-                        drafts[draftIdx].status = .sent
-                    }
-                    log.info("✅ SENT \(sentCount)/\(approvedDrafts.count): \(draft.recipientName) <\(draft.recipientEmail)> — \"\(draft.subject)\"")
-                    sendRecords.append(SendRecord(
-                        draftId: draft.id,
-                        recipientEmail: draft.recipientEmail,
-                        recipientName: draft.recipientName,
-                        subject: draft.subject,
-                        sentAt: Date(),
-                        status: .sent,
-                        smtpResponse: result?.smtpResponse
-                    ))
-                } else {
-                    failedCount += 1
-                    if let draftIdx = drafts.firstIndex(where: { $0.id == draft.id }) {
-                        drafts[draftIdx].status = .failed
-                    }
-                    log.error("❌ FAILED \(failedCount): \(draft.recipientName) <\(draft.recipientEmail)> — \(result?.errorMessage ?? "unknown error")")
-                    sendRecords.append(SendRecord(
-                        draftId: draft.id,
-                        recipientEmail: draft.recipientEmail,
-                        recipientName: draft.recipientName,
-                        subject: draft.subject,
-                        sentAt: Date(),
-                        status: .failed,
-                        errorMessage: result?.errorMessage
-                    ))
-                    
-                    // Anomaly detection: >20% failure → auto-pause
-                    let total = sentCount + failedCount
-                    if total >= 5 && Double(failedCount) / Double(total) > 0.2 {
-                        campaignStatus = .paused
-                        loadingMessage = "High failure rate detected (\(failedCount)/\(total) failed). Paused for review."
-                        postSystemNotification(title: "Campaign Paused", body: "High failure rate: \(failedCount)/\(total) emails failed.")
-                    }
-                }
-                
-                // Delay between emails
-                if campaignStatus == .running {
-                    try? await Task.sleep(for: .seconds(settings.delaySeconds))
+                self.sendRecords.append(SendRecord(
+                    draftId: draftId,
+                    recipientEmail: self.drafts.first(where: { $0.id == draftId })?.recipientEmail ?? "",
+                    recipientName: self.drafts.first(where: { $0.id == draftId })?.recipientName ?? "",
+                    subject: self.drafts.first(where: { $0.id == draftId })?.subject ?? "",
+                    sentAt: Date(),
+                    status: .failed,
+                    errorMessage: errorMessage
+                ))
+            },
+            onProgress: { [weak self] msg in
+                self?.loadingMessage = msg
+            },
+            onPause: { [weak self] msg in
+                self?.loadingMessage = msg
+                self?.postSystemNotification(title: "Campaign Paused", body: msg)
+            },
+            onComplete: { [weak self] sent, failed in
+                guard let self = self else { return }
+                if self.campaignStatus == .complete {
+                    self.postSystemNotification(
+                        title: "Campaign Complete",
+                        body: "\(sent) sent, \(failed) failed out of \(self.campaignTotal) emails."
+                    )
                 }
             }
-            
-            if campaignStatus == .running {
-                campaignStatus = .complete
-                log.section("CAMPAIGN COMPLETE")
-                log.info("Sent: \(sentCount), Failed: \(failedCount), Total: \(approvedDrafts.count)")
-                postSystemNotification(
-                    title: "Campaign Complete",
-                    body: "\(sentCount) sent, \(failedCount) failed out of \(approvedDrafts.count) emails."
-                )
-            }
-        }
+        )
     }
     
-    func pauseCampaign() { campaignStatus = .paused; log.info("Campaign PAUSED at \(sentCount)/\(campaignTotal)") }
-    func resumeCampaign() { campaignStatus = .running; log.info("Campaign RESUMED") }
+    func pauseCampaign() {
+        campaignStatus = .paused
+        sendEngine.pause()
+        log.info("Campaign PAUSED at \(sentCount)/\(campaignTotal)")
+    }
+    
+    func resumeCampaign() {
+        campaignStatus = .running
+        sendEngine.resume()
+        log.info("Campaign RESUMED")
+    }
+    
     func stopCampaign() {
         campaignStatus = .stopped
-        sendTask?.cancel()
+        sendEngine.stop()
         log.warn("Campaign STOPPED: \(sentCount) sent, \(failedCount) failed")
         postSystemNotification(title: "Campaign Stopped", body: "\(sentCount) sent, \(failedCount) failed before stop.")
+    }
+    
+    // MARK: - Contact Persistence Shortcuts
+    
+    func saveContactsCache() { contactManager.save(contacts) }
+    func clearContactsCache() {
+        contactManager.clearCache()
+        contacts = []
     }
     
     // MARK: - Error Helpers
@@ -681,7 +559,7 @@ class AppViewModel: ObservableObject {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
     
-    private func postSystemNotification(title: String, body: String) {
+    func postSystemNotification(title: String, body: String) {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
         content.title = title
@@ -693,62 +571,11 @@ class AppViewModel: ObservableObject {
     
     // MARK: - Helpers
     
-    private func waitForBusinessHours() async {
-        let calendar = Calendar.current
-        let hour = calendar.component(.hour, from: Date())
-        if hour < settings.businessHoursStart || hour >= settings.businessHoursEnd {
-            let nextStart = calendar.nextDate(
-                after: Date(),
-                matching: DateComponents(hour: settings.businessHoursStart),
-                matchingPolicy: .nextTime
-            )!
-            let waitTime = nextStart.timeIntervalSince(Date())
-            loadingMessage = "Waiting for business hours (\(settings.businessHoursStart):00)..."
-            try? await Task.sleep(for: .seconds(max(1, waitTime)))
-        }
-    }
-    
-    // MARK: - Contact Persistence
-    
-    private static var contactsCacheURL: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("JobBus", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("contacts_cache.json")
-    }
-    
-    func saveContactsCache() {
-        guard !contacts.isEmpty else { return }
-        let url = Self.contactsCacheURL
-        Task.detached(priority: .utility) { [contacts] in
-            if let data = try? JSONEncoder().encode(contacts) {
-                try? data.write(to: url, options: .atomic)
-            }
-        }
-    }
-    
-    private func loadCachedContacts() {
-        guard FileManager.default.fileExists(atPath: Self.contactsCacheURL.path),
-              let data = try? Data(contentsOf: Self.contactsCacheURL),
-              let cached = try? JSONDecoder().decode([Contact].self, from: data),
-              !cached.isEmpty
-        else { return }
-        self.contacts = cached
-    }
-    
-    func clearContactsCache() {
-        try? FileManager.default.removeItem(at: Self.contactsCacheURL)
-        contacts = []
-    }
-    
     /// Restore the resume attachment URL from a previous session.
-    /// The resume is copied to Application Support on first parse,
-    /// but resumeFileURL (@Published) is lost on app restart.
     private func restoreCachedResumeURL() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let jobBusDir = appSupport.appendingPathComponent("JobBus", isDirectory: true)
         
-        // Check common resume extensions
         for ext in ["pdf", "docx", "doc"] {
             let url = jobBusDir.appendingPathComponent("resume_attachment.\(ext)")
             if FileManager.default.fileExists(atPath: url.path) {

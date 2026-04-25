@@ -1,11 +1,16 @@
 import Foundation
 
 // MARK: - Email Writer
+/// Generates personalized cold outreach emails using the Hook → Context → Credibility → CTA structure.
+/// Each email uses a single, rotated achievement to prevent resume-dumping.
 class EmailWriter {
     
     func compose(contact: Contact, resume: ResumeProfile,
-                 ai: AIProvider, customInstructions: String = "") async throws -> EmailDraft {
-        let prompt = buildPrompt(contact: contact, resume: resume, customInstructions: customInstructions)
+                 ai: AIProvider, customInstructions: String = "",
+                 selectedAchievement: String = "") async throws -> EmailDraft {
+        let prompt = buildPrompt(contact: contact, resume: resume,
+                                 customInstructions: customInstructions,
+                                 selectedAchievement: selectedAchievement)
         let response = try await ai.generate(prompt: prompt)
         
         let (subject, body) = parseEmailResponse(response)
@@ -29,7 +34,9 @@ class EmailWriter {
             subject: subject,
             body: body,
             htmlBody: htmlBody,
-            status: .pending
+            status: .pending,
+            usedAchievement: selectedAchievement.isEmpty ? nil : selectedAchievement,
+            shouldAttachResume: contact.shouldAttachResume
         )
         
         // Run quality check
@@ -39,7 +46,9 @@ class EmailWriter {
         return draft
     }
     
-    private func buildPrompt(contact: Contact, resume: ResumeProfile, customInstructions: String = "") -> String {
+    private func buildPrompt(contact: Contact, resume: ResumeProfile,
+                             customInstructions: String = "",
+                             selectedAchievement: String = "") -> String {
         let companyInfo: String
         if contact.company.isEmpty {
             companyInfo = "(Company unknown — do NOT use placeholders like [Company Name]. Instead, reference their role or industry.)"
@@ -59,15 +68,43 @@ class EmailWriter {
             customBlock = ""
         }
         
+        // Select achievement — use the rotated one, or pick the first
+        let achievement = selectedAchievement.isEmpty
+            ? (resume.achievements.first ?? "Experienced professional")
+            : selectedAchievement
+        
+        // Pick 3 most relevant skills (not all 6)
+        let relevantSkills = resume.skills.prefix(3).joined(separator: ", ")
+        
         return """
         Write a personalized cold outreach email from a job seeker to a professional.
+        
+        MANDATORY EMAIL STRUCTURE — Follow this EXACTLY:
+        
+        1. HOOK (First 1-2 lines):
+           - Start with something about the RECIPIENT — their company, role, or team
+           - Ask a relevant question OR make an observation about their work
+           - This line must contain "\(contact.firstName)" or "\(contact.company)"
+           - NEVER start with "I" as the first word
+        
+        2. CONTEXT (1-2 lines):
+           - Why you're reaching out — connect YOUR experience to THEIR role
+           - Be specific about what drew you to them
+        
+        3. CREDIBILITY (1-2 lines):
+           - Use this ONE specific achievement: "\(achievement)"
+           - Present it naturally, not as a resume bullet point
+           - Do NOT add any other achievements or metrics
+        
+        4. CTA (1 line):
+           - Light, low-commitment ask
+           - A question, not a demand
         
         SENDER PROFILE:
         Name: \(resume.name)
         Current Role: \(resume.currentRole)
         Experience: \(resume.yearsExperience) years
-        Key Skills: \(resume.skills.prefix(6).joined(separator: ", "))
-        Top Achievements: \(resume.achievements.prefix(3).joined(separator: "; "))
+        Key Skills: \(relevantSkills)
         Context: \(resume.emailContext)
         
         RECIPIENT:
@@ -77,32 +114,36 @@ class EmailWriter {
         Type: \(contact.recipientType.label)
         Location: \(contact.location)
         
-        INSTRUCTIONS FOR \(contact.recipientType.label.uppercased()):
+        TONE INSTRUCTIONS FOR \(contact.recipientType.label.uppercased()):
         \(contact.recipientType.writingInstructions)
         \(customBlock)
         ABSOLUTE RULES:
-        1. Email must be under 150 words (body only, excluding signature)
+        1. Total body MUST be under 120 words (excluding signature)
         2. Use the recipient's FIRST NAME only (not full name, not "Dear")
-        3. Sound like a real human who researched them, NOT a template
-        4. If company name is provided, reference it by name at least once
-        5. Include one specific, quantifiable achievement from sender profile
+        3. Sound like a real human, NOT a template
+        4. If company name is provided, reference it naturally at least once
+        5. Use ONLY the ONE achievement provided above — no others
         6. End with a soft, low-commitment call to action
-        7. NO buzzwords: "passionate", "motivated", "synergy", "leverage"
-        8. NO filler phrases: "I hope this finds you well", "I am writing to", "Please find attached"
-        9. NO exclamation marks
-        10. NO salary or compensation mentions
-        11. Do NOT include a signature block — it will be added automatically
-        12. NEVER use square-bracket placeholders like [Company Name], [Your Name], [Position] — use the actual values provided above
+        7. NO buzzwords: "passionate", "motivated", "synergy", "leverage", "dynamic"
+        8. NO filler: "I hope this finds you well", "I am writing to", "Please find attached"
+        9. NO "I came across your profile" or "I noticed your profile"
+        10. NO exclamation marks
+        11. NO salary or compensation mentions
+        12. Do NOT include a signature block — it will be added automatically
+        13. NEVER use square-bracket placeholders like [Company Name], [Your Name] — use actual values
+        14. First word of the email must NOT be "I"
+        15. Each paragraph must be 3 lines or fewer
+        16. Vary sentence length — mix short punchy sentences with longer ones
         
         FORMAT — Return EXACTLY like this (no markdown, no extra text):
-        SUBJECT: [Your subject line here]
+        SUBJECT: [Your subject line here — 5-8 words, no clickbait]
         
         BODY:
         [Your email body here]
         """
     }
     
-    private func parseEmailResponse(_ response: String) -> (subject: String, body: String) {
+    func parseEmailResponse(_ response: String) -> (subject: String, body: String) {
         let text = response.trimmingCharacters(in: .whitespacesAndNewlines)
         
         var subject = ""
@@ -139,7 +180,6 @@ class EmailWriter {
                 subject = lines[0]
                 body = lines.dropFirst().joined(separator: "\n")
             } else if lines.count == 1 {
-                // Single block of text — try to make the best of it
                 subject = "Introduction"
                 body = lines[0]
             }

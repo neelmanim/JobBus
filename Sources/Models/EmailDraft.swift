@@ -16,6 +16,11 @@ struct EmailDraft: Identifiable, Codable {
     var status: DraftStatus
     var regenerateCount: Int
     
+    // Intelligence: which achievement was used in this email (for rotation)
+    var usedAchievement: String?
+    // Whether resume should be attached (based on recipient type)
+    var shouldAttachResume: Bool
+    
     init(
         id: UUID = UUID(),
         contactId: UUID,
@@ -29,7 +34,9 @@ struct EmailDraft: Identifiable, Codable {
         htmlBody: String = "",
         qualityScore: EmailQualityScore = EmailQualityScore(),
         status: DraftStatus = .pending,
-        regenerateCount: Int = 0
+        regenerateCount: Int = 0,
+        usedAchievement: String? = nil,
+        shouldAttachResume: Bool = false
     ) {
         self.id = id
         self.contactId = contactId
@@ -44,6 +51,8 @@ struct EmailDraft: Identifiable, Codable {
         self.qualityScore = qualityScore
         self.status = status
         self.regenerateCount = regenerateCount
+        self.usedAchievement = usedAchievement
+        self.shouldAttachResume = shouldAttachResume
     }
 }
 
@@ -67,6 +76,10 @@ struct EmailQualityScore: Codable {
     var noSpamWords: Bool
     var hasCTA: Bool
     var toneMatch: Bool
+    // New quality dimensions (Tier 2)
+    var hookPresent: Bool
+    var singleAchievement: Bool
+    var noGenericOpening: Bool
     
     init(
         nameMatch: Bool = false,
@@ -76,7 +89,10 @@ struct EmailQualityScore: Codable {
         noPlaceholders: Bool = false,
         noSpamWords: Bool = false,
         hasCTA: Bool = false,
-        toneMatch: Bool = false
+        toneMatch: Bool = false,
+        hookPresent: Bool = false,
+        singleAchievement: Bool = false,
+        noGenericOpening: Bool = false
     ) {
         self.nameMatch = nameMatch
         self.companyMatch = companyMatch
@@ -86,19 +102,23 @@ struct EmailQualityScore: Codable {
         self.noSpamWords = noSpamWords
         self.hasCTA = hasCTA
         self.toneMatch = toneMatch
+        self.hookPresent = hookPresent
+        self.singleAchievement = singleAchievement
+        self.noGenericOpening = noGenericOpening
     }
     
     var score: Int {
         [nameMatch, companyMatch, lengthOK, subjectLengthOK,
-         noPlaceholders, noSpamWords, hasCTA, toneMatch]
+         noPlaceholders, noSpamWords, hasCTA, toneMatch,
+         hookPresent, singleAchievement, noGenericOpening]
             .filter { $0 }.count
     }
     
     var grade: QualityGrade {
         switch score {
-        case 7...8: return .excellent
-        case 5...6: return .good
-        case 3...4: return .fair
+        case 9...11: return .excellent
+        case 7...8: return .good
+        case 5...6: return .fair
         default: return .poor
         }
     }

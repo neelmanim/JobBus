@@ -201,10 +201,29 @@ struct DraftCard: View {
                 
                 Spacer()
                 
+                // Resume attachment indicator
+                if draft.shouldAttachResume {
+                    HStack(spacing: 3) {
+                        Image(systemName: "paperclip")
+                            .font(.caption2)
+                        Text("Resume")
+                            .font(.caption2.weight(.medium))
+                    }
+                    .foregroundColor(Color(hex: "#3b82f6"))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color(hex: "#3b82f6").opacity(0.1))
+                    .cornerRadius(4)
+                }
+                
                 // Quality badge
                 if draft.status != .failed {
-                    Image(systemName: draft.qualityScore.grade.icon)
-                        .foregroundColor(Color(hex: draft.qualityScore.grade.colorHex))
+                    HStack(spacing: 3) {
+                        Image(systemName: draft.qualityScore.grade.icon)
+                        Text("\(draft.qualityScore.score)/11")
+                            .font(.caption2.monospaced())
+                    }
+                    .foregroundColor(Color(hex: draft.qualityScore.grade.colorHex))
                 }
                 
                 // Status indicator
@@ -240,6 +259,21 @@ struct DraftCard: View {
                 .foregroundColor(draft.status == .failed ? .red.opacity(0.7) : .secondary)
                 .lineLimit(2)
             
+            // Quality bar
+            if draft.status != .failed {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color.gray.opacity(0.15))
+                            .frame(height: 3)
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color(hex: draft.qualityScore.grade.colorHex))
+                            .frame(width: geo.size.width * CGFloat(draft.qualityScore.score) / 11.0, height: 3)
+                    }
+                }
+                .frame(height: 3)
+            }
+            
             HStack(spacing: 8) {
                 if draft.status != .failed {
                     Button(action: onEdit) {
@@ -250,8 +284,15 @@ struct DraftCard: View {
                 }
                 
                 Button(action: onRegenerate) {
-                    Label("Regenerate", systemImage: "arrow.counterclockwise")
-                        .font(.caption)
+                    HStack(spacing: 4) {
+                        Label("Regenerate", systemImage: "arrow.counterclockwise")
+                            .font(.caption)
+                        if draft.regenerateCount > 0 {
+                            Text("(\(draft.regenerateCount))")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
                 }
                 .buttonStyle(.bordered)
                 .disabled(draft.status == .generating)

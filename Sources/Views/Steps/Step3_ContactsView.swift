@@ -192,6 +192,30 @@ struct Step3_ContactsView: View {
                             .cornerRadius(6)
                     }
                     .width(min: 80, ideal: 110)
+                    
+                    TableColumn("Relevance") { contact in
+                        if contact.relevanceScore > 0 {
+                            let label = contact.relevanceScore >= 0.6 ? "High"
+                                      : contact.relevanceScore >= 0.3 ? "Med"
+                                      : "Low"
+                            let color = contact.relevanceScore >= 0.6 ? "#10b981"
+                                      : contact.relevanceScore >= 0.3 ? "#f59e0b"
+                                      : "#6b7280"
+                            Text(label)
+                                .font(.caption.bold())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color(hex: color).opacity(0.12))
+                                .foregroundColor(Color(hex: color))
+                                .cornerRadius(6)
+                                .help(contact.relevanceReason)
+                        } else {
+                            Text("—")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .width(min: 60, ideal: 80)
                 }
             }
             

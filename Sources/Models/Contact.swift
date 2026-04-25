@@ -54,45 +54,57 @@ enum RecipientType: String, Codable, CaseIterable {
         switch self {
         case .recruiter:
             return """
-            Write a warm, professional email. Recruiters review hundreds of candidates — make it easy to scan.
-            Lead with your strongest skill match, mention specific technologies, and keep it under 120 words.
-            Tone: Professional but approachable. They're used to inbound interest.
+            HOOK: Reference their recruiting focus area or a recent role they posted. Ask what they're currently prioritizing.
+            CONTEXT: Mention your core skill stack in one sentence — make it scannable.
+            CREDIBILITY: Use the provided achievement — frame it as a result, not a resume line.
             CTA: "Would you be open to a quick chat if any of this aligns with what you're hiring for?"
+            TONE: Professional but approachable. They review hundreds of candidates — be easy to scan.
+            MAX WORDS: 120
             """
         case .hiringManager:
             return """
-            Write a value-focused email. Hiring managers care about what you can DO for their team.
-            Reference their team's product/tech stack specifically. Lead with a relevant achievement with numbers.
-            Tone: Peer-to-peer, knowledgeable. Show you understand their domain.
+            HOOK: Reference their team's product, a feature launch, or a technical direction. Show you've done research.
+            CONTEXT: Connect YOUR experience to THEIR team's specific needs in one line.
+            CREDIBILITY: Use the provided achievement — frame it as impact you delivered that's relevant to their team.
             CTA: "Would it make sense to connect briefly about how I could contribute?"
+            TONE: Peer-to-peer, knowledgeable. You understand their domain.
+            MAX WORDS: 120
             """
         case .engineering:
             return """
-            Write a technically credible email. Engineering leaders (VP/Director) think about architecture and scale.
-            Reference a technical challenge relevant to their company. Share a concrete result you achieved.
-            Tone: Technical and confident, not salesy. Speak their language.
+            HOOK: Reference a technical challenge relevant to their company's scale or architecture.
+            CONTEXT: Show you understand their engineering domain — mention specific tech or problems.
+            CREDIBILITY: Use the provided achievement — frame it as a technical win with measurable impact.
             CTA: "I'd welcome a conversation about the technical challenges your team is tackling."
+            TONE: Technical and confident, not salesy. Speak their language.
+            MAX WORDS: 100
             """
         case .cSuite:
             return """
-            Write a concise, high-impact email. C-level executives have 30 seconds to read this.
-            Lead with business impact, not technical details. Use numbers: revenue, scale, efficiency.
-            Tone: Executive-level, strategic. Maximum 80 words in the body.
+            HOOK: Reference a strategic initiative, market move, or company milestone. Be concise.
+            CONTEXT: One line connecting your expertise to their business priorities.
+            CREDIBILITY: Use the provided achievement — frame it as business impact (revenue, efficiency, scale).
             CTA: "Would a brief intro be worthwhile?"
+            TONE: Executive-level, strategic. Maximum brevity.
+            MAX WORDS: 80
             """
         case .hr:
             return """
-            Write a polite, structured email. HR professionals appreciate clear communication.
-            Mention the role type you're interested in and your key qualifications.
-            Tone: Professional and respectful. Reference company culture if possible.
-            CTA: "Could you point me to the right person for [role type] opportunities?"
+            HOOK: Reference the company culture or a recent company initiative.
+            CONTEXT: Mention the type of role you're exploring and why their company interests you.
+            CREDIBILITY: Use the provided achievement — frame it to show cultural fit and professionalism.
+            CTA: "Could you point me to the right person for these types of opportunities?"
+            TONE: Professional and respectful. Clear communication.
+            MAX WORDS: 120
             """
         case .other:
             return """
-            Write a professional networking email. Keep it genuine and concise.
-            Find a connection point — shared industry, technology, or professional interest.
-            Tone: Friendly and authentic. This isn't a job application, it's networking.
+            HOOK: Find a connection point — shared industry, technology, or professional interest.
+            CONTEXT: Explain why you're reaching out to THEM specifically.
+            CREDIBILITY: Use the provided achievement — frame it as a shared professional interest.
             CTA: "Would you be open to connecting?"
+            TONE: Friendly and authentic. This is networking, not a job application.
+            MAX WORDS: 120
             """
         }
     }
@@ -114,8 +126,21 @@ struct Contact: Identifiable, Codable, Hashable {
     var isSelected: Bool
     var apolloId: String?
     
+    // Intelligence layer: contact relevance scoring
+    var relevanceScore: Double
+    var relevanceReason: String
+    
     var fullName: String {
         "\(firstName) \(lastName)".trimmingCharacters(in: .whitespaces)
+    }
+    
+    /// Whether a resume should be attached when emailing this contact
+    var shouldAttachResume: Bool {
+        switch recipientType {
+        case .recruiter, .hiringManager: return true
+        case .cSuite: return false
+        case .engineering, .hr, .other: return false
+        }
     }
     
     init(
@@ -131,7 +156,9 @@ struct Contact: Identifiable, Codable, Hashable {
         status: ContactStatus = .added,
         recipientType: RecipientType = .other,
         isSelected: Bool = true,
-        apolloId: String? = nil
+        apolloId: String? = nil,
+        relevanceScore: Double = 0.0,
+        relevanceReason: String = ""
     ) {
         self.id = id
         self.firstName = firstName
@@ -146,5 +173,7 @@ struct Contact: Identifiable, Codable, Hashable {
         self.recipientType = recipientType
         self.isSelected = isSelected
         self.apolloId = apolloId
+        self.relevanceScore = relevanceScore
+        self.relevanceReason = relevanceReason
     }
 }
