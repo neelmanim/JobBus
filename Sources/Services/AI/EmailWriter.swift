@@ -96,29 +96,62 @@ class EmailWriter {
         var subject = ""
         var body = ""
         
-        // Extract subject
-        if let subjectRange = text.range(of: "SUBJECT:", options: .caseInsensitive) {
+        // Strategy 1: Look for SUBJECT: ... BODY: markers (case-insensitive)
+        if let subjectRange = text.range(of: "SUBJECT:", options: .caseInsensitive) ??
+           text.range(of: "Subject:", options: .caseInsensitive) ??
+           text.range(of: "**Subject:**", options: .caseInsensitive) {
             let afterSubject = text[subjectRange.upperBound...]
-            if let bodyRange = afterSubject.range(of: "BODY:", options: .caseInsensitive) {
+            
+            if let bodyRange = afterSubject.range(of: "BODY:", options: .caseInsensitive) ??
+               afterSubject.range(of: "Body:", options: .caseInsensitive) ??
+               afterSubject.range(of: "**Body:**", options: .caseInsensitive) {
                 subject = String(afterSubject[..<bodyRange.lowerBound])
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 body = String(afterSubject[bodyRange.upperBound...])
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             } else {
-                subject = String(afterSubject.prefix(100))
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                // Has SUBJECT but no BODY marker — subject is first line, rest is body
+                let subjectLines = String(afterSubject).components(separatedBy: "\n")
+                subject = subjectLines.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                body = subjectLines.dropFirst().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
         
-        // Fallback: first line is subject, rest is body
-        if subject.isEmpty {
-            let lines = text.components(separatedBy: "\n").filter { !$0.isEmpty }
-            subject = lines.first ?? "Introduction"
-            body = lines.dropFirst().joined(separator: "\n")
+        // Strategy 2: No markers found — use first line as subject, rest as body
+        if subject.isEmpty && body.isEmpty {
+            let lines = text.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            
+            if lines.count >= 2 {
+                subject = lines[0]
+                body = lines.dropFirst().joined(separator: "\n")
+            } else if lines.count == 1 {
+                // Single block of text — try to make the best of it
+                subject = "Introduction"
+                body = lines[0]
+            }
         }
         
-        // Clean up
-        subject = subject.replacingOccurrences(of: "Subject:", with: "", options: .caseInsensitive)
+        // Strategy 3: If body is still empty but we have text, use ALL text as body
+        if body.isEmpty && text.count > 30 {
+            body = text
+            if subject.isEmpty {
+                subject = "Introduction"
+            }
+        }
+        
+        // Clean up subject line
+        subject = subject
+            .replacingOccurrences(of: "Subject:", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "SUBJECT:", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "**", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Clean up body — remove leading "Body:" if accidentally included
+        body = body
+            .replacingOccurrences(of: "^Body:\\s*", with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: "^BODY:\\s*", with: "", options: [.regularExpression, .caseInsensitive])
             .trimmingCharacters(in: .whitespacesAndNewlines)
         
         return (subject, body)

@@ -384,14 +384,14 @@ class AppViewModel: ObservableObject {
                     let bodyHits = placeholders.filter { bodyText.contains($0) }.count
                     
                     if bodyText.isEmpty || bodyText.count < 30 {
-                        // Truly empty — mark failed
+                        // Truly empty — mark failed with diagnostic info
                         var failedDraft = EmailDraft(contactId: contact.id)
                         failedDraft.status = .failed
                         failedDraft.recipientName = contact.fullName
                         failedDraft.recipientEmail = contact.email
                         failedDraft.recipientCompany = contact.company
                         failedDraft.subject = "(Incomplete — AI returned empty response)"
-                        failedDraft.body = "The AI returned an empty or too-short response.\n\nTap Regenerate to try again, or Edit to write manually."
+                        failedDraft.body = "The AI returned an empty or too-short response (\(bodyText.count) chars).\n\nSubject parsed: \"\(draft.subject)\"\nBody parsed: \"\(bodyText.prefix(100))\"\n\nTap Regenerate to try again, or Edit to write manually."
                         updatedDrafts.append(failedDraft)
                         failureCount += 1
                     } else if (subjectHits + bodyHits) >= 2 {
