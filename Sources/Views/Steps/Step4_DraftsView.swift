@@ -109,10 +109,11 @@ struct Step4_DraftsView: View {
             .background(.bar)
         }
         .sheet(item: $selectedDraft) { draft in
-            EditDraftSheet(draft: draft, subject: $editingSubject, emailBody: $editingBody) { newSubject, newBody in
+            EditDraftSheet(draft: draft) { newSubject, newBody in
                 if let i = vm.drafts.firstIndex(where: { $0.id == draft.id }) {
                     vm.drafts[i].subject = newSubject
                     vm.drafts[i].body = newBody
+                    vm.drafts[i].status = .approved
                     vm.drafts[i].htmlBody = EmailTemplateBuilder.buildHTML(
                         body: newBody,
                         signature: EmailSignature(
@@ -228,8 +229,8 @@ struct StatBadge: View {
 // MARK: - Edit Draft Sheet
 struct EditDraftSheet: View {
     let draft: EmailDraft
-    @Binding var subject: String
-    @Binding var emailBody: String
+    @State private var subject: String = ""
+    @State private var emailBody: String = ""
     @Environment(\.dismiss) var dismiss
     let onSave: (String, String) -> Void
     
@@ -243,8 +244,9 @@ struct EditDraftSheet: View {
             
             TextEditor(text: $emailBody)
                 .font(.body)
-                .frame(minHeight: 200)
+                .frame(minHeight: 250)
                 .border(Color.gray.opacity(0.3))
+                .cornerRadius(6)
             
             HStack {
                 Button("Cancel") { dismiss() }.buttonStyle(.bordered)
@@ -257,6 +259,10 @@ struct EditDraftSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 600, height: 450)
+        .frame(width: 650, height: 500)
+        .onAppear {
+            subject = draft.subject
+            emailBody = draft.body
+        }
     }
 }
