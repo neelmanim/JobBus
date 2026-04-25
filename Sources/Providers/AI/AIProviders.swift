@@ -125,11 +125,32 @@ class GroqProvider: AIProvider {
         let key = apiKey
         guard !key.isEmpty else { throw ProviderError.notConfigured("Groq API key not set. Go to Settings → Providers to add your key.") }
         
+        // Retry with exponential backoff on rate limit
+        var lastError: Error?
+        for attempt in 0..<3 {
+            if attempt > 0 {
+                let backoffMs = 3000 * (1 << (attempt - 1))  // 3s, 6s
+                try? await Task.sleep(for: .milliseconds(backoffMs))
+            }
+            
+            do {
+                return try await callGroq(prompt: prompt, key: key)
+            } catch ProviderError.rateLimited(let msg) {
+                lastError = ProviderError.rateLimited(msg)
+                continue
+            } catch {
+                throw error
+            }
+        }
+        throw lastError ?? ProviderError.serviceUnavailable("Groq rate limit exceeded after retries")
+    }
+    
+    private func callGroq(prompt: String, key: String) async throws -> String {
         let url = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 60
         
         let body: [String: Any] = [
@@ -150,7 +171,7 @@ class GroqProvider: AIProvider {
             let errorBody = String(data: data, encoding: .utf8) ?? ""
             switch http.statusCode {
             case 429:
-                throw ProviderError.rateLimited("Groq rate limit exceeded. Please wait a moment and try again.")
+                throw ProviderError.rateLimited("Groq rate limit exceeded. Retrying with backoff...")
             case 401, 403:
                 throw ProviderError.invalidApiKey
             default:

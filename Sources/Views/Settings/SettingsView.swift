@@ -78,6 +78,10 @@ struct SettingsView: View {
                 .animation(.easeInOut(duration: 0.2), value: selectedTab)
                 .padding(28)
             }
+            .onDisappear {
+                // Auto-save on dismiss to prevent data loss if user closes without clicking Done
+                vm.settings.save()
+            }
         }
         .frame(width: 640, height: 560)
         .background(Color(nsColor: .windowBackgroundColor))

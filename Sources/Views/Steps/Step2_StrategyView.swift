@@ -152,14 +152,51 @@ struct Step2_StrategyView: View {
                     Button {
                         Task { await vm.searchContacts() }
                     } label: {
-                        Label("Find Contacts", systemImage: "magnifyingglass")
-                            .font(.body.bold())
+                        if vm.isSearching {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Searching...")
+                                    .font(.body.bold())
+                            }
                             .padding(.horizontal, 32)
                             .padding(.vertical, 14)
+                        } else {
+                            Label("Find Contacts", systemImage: "magnifyingglass")
+                                .font(.body.bold())
+                                .padding(.horizontal, 32)
+                                .padding(.vertical, 14)
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Color(hex: "#8b5cf6"))
-                    .disabled(vm.isLoading)
+                    .disabled(vm.isSearching || vm.isLoading)
+                    
+                    if vm.isSearching {
+                        Button {
+                            vm.cancelSearch()
+                        } label: {
+                            Label("Cancel", systemImage: "xmark.circle")
+                                .font(.body.bold())
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 14)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+                    }
+                    
+                    if !vm.contacts.isEmpty && !vm.isSearching {
+                        Button {
+                            vm.currentStep = .contacts
+                        } label: {
+                            Label("Use \(vm.contacts.count) Cached", systemImage: "person.crop.circle.badge.checkmark")
+                                .font(.body.bold())
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 14)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Color(hex: "#3b82f6"))
+                    }
                     
                     Button {
                         vm.currentStep = .contacts
@@ -171,13 +208,14 @@ struct Step2_StrategyView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Color(hex: "#10b981"))
+                    .disabled(vm.isSearching)
                 }
                 
                 Text("Use 'Skip' to add contacts via CSV import or manual entry")
                     .font(.caption)
                     .foregroundColor(.secondary)
                 
-                if vm.isLoading {
+                if vm.isSearching {
                     VStack(spacing: 8) {
                         ProgressView()
                         Text(vm.loadingMessage)

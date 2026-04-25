@@ -11,6 +11,7 @@ struct Step4_DraftsView: View {
     var pendingCount: Int { vm.drafts.filter { $0.status == .pending }.count }
     var approvedCount: Int { vm.drafts.filter { $0.status == .approved }.count }
     var reviewCount: Int { vm.drafts.filter { $0.status == .review }.count }
+    var failedCount: Int { vm.drafts.filter { $0.status == .failed }.count }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -19,11 +20,26 @@ struct Step4_DraftsView: View {
                 Text("AI Email Drafts")
                     .font(.largeTitle.bold())
                 
-                if vm.isLoading {
-                    ProgressView(value: Double(vm.drafts.count), total: Double(max(1, vm.contacts.filter { $0.isSelected }.count)))
-                    Text(vm.loadingMessage)
-                        .font(.callout)
-                        .foregroundColor(.secondary)
+                if vm.isGenerating {
+                    VStack(spacing: 8) {
+                        let totalContacts = vm.contacts.filter { $0.isSelected && !$0.email.isEmpty }.count
+                        ProgressView(value: Double(vm.drafts.count), total: Double(max(1, totalContacts)))
+                            .tint(Color(hex: "#8b5cf6"))
+                        
+                        Text(vm.loadingMessage)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                        
+                        Button {
+                            vm.cancelGeneration()
+                        } label: {
+                            Label("Cancel Generation", systemImage: "xmark.circle")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.red)
+                    }
+                    .padding(.horizontal, 40)
                 }
                 
                 // Stats
@@ -31,79 +47,107 @@ struct Step4_DraftsView: View {
                     StatBadge(label: "Approved", count: approvedCount, color: "#10b981")
                     StatBadge(label: "Pending", count: pendingCount, color: "#f59e0b")
                     StatBadge(label: "Needs Review", count: reviewCount, color: "#ef4444")
+                    if failedCount > 0 {
+                        StatBadge(label: "Failed", count: failedCount, color: "#dc2626")
+                    }
                     StatBadge(label: "Total", count: vm.drafts.count, color: "#8b5cf6")
                 }
             }
             .padding(.top, 24)
             .padding(.bottom, 12)
             
-            // Draft List
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    ForEach(Array(vm.drafts.enumerated()), id: \.element.id) { index, draft in
-                        DraftCard(
-                            draft: draft,
-                            onApprove: {
-                                vm.drafts[index].status = .approved
-                                reviewedCount += 1
-                            },
-                            onReject: {
-                                vm.drafts[index].status = .rejected
-                            },
-                            onEdit: {
-                                selectedDraft = draft
-                                editingSubject = draft.subject
-                                editingBody = draft.body
-                            },
-                            onRegenerate: {
-                                Task {
-                                    guard let contact = vm.contacts.first(where: { $0.id == draft.contactId }),
-                                          let profile = vm.resumeProfile else { return }
-                                    vm.drafts[index].status = .generating
-                                    if let newDraft = try? await vm.emailWriter.compose(
-                                        contact: contact, resume: profile, ai: vm.aiProvider
-                                    ) {
-                                        vm.drafts[index] = newDraft
-                                        vm.drafts[index].regenerateCount += 1
+            if vm.drafts.isEmpty && !vm.isGenerating {
+                // Empty state
+                Spacer()
+                VStack(spacing: 16) {
+                    Image(systemName: "envelope.fill")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary.opacity(0.4))
+                    Text("No drafts yet")
+                        .font(.title2.weight(.medium))
+                        .foregroundColor(.secondary)
+                    Text("Go to Contacts and click Compose Emails to generate AI-powered email drafts.")
+                        .font(.callout)
+                        .foregroundColor(.secondary.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 350)
+                }
+                Spacer()
+            } else {
+                // Draft List
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        ForEach(Array(vm.drafts.enumerated()), id: \.element.id) { index, draft in
+                            DraftCard(
+                                draft: draft,
+                                onApprove: {
+                                    vm.drafts[index].status = .approved
+                                    reviewedCount += 1
+                                },
+                                onReject: {
+                                    vm.drafts[index].status = .rejected
+                                },
+                                onEdit: {
+                                    selectedDraft = draft
+                                    editingSubject = draft.subject
+                                    editingBody = draft.body
+                                },
+                                onRegenerate: {
+                                    Task {
+                                        guard let contact = vm.contacts.first(where: { $0.id == draft.contactId }),
+                                              let profile = vm.resumeProfile else { return }
+                                        vm.drafts[index].status = .generating
+                                        if let newDraft = try? await vm.emailWriter.compose(
+                                            contact: contact, resume: profile, ai: vm.aiProvider
+                                        ) {
+                                            vm.drafts[index] = newDraft
+                                            vm.drafts[index].regenerateCount += 1
+                                        } else {
+                                            vm.drafts[index].status = .failed
+                                        }
                                     }
                                 }
-                            }
-                        )
+                            )
+                        }
                     }
+                    .padding(.horizontal, 20)
                 }
-                .padding(.horizontal, 20)
             }
             
             // Bottom Bar
             HStack {
-                let minReviews = 10
-                if reviewedCount < minReviews {
-                    Text("Review at least \(minReviews - reviewedCount) more drafts to enable Approve All")
-                        .font(.caption)
-                        .foregroundColor(.orange)
+                if !vm.drafts.isEmpty {
+                    let minReviews = min(10, vm.drafts.count)
+                    if reviewedCount < minReviews && vm.drafts.count > 10 {
+                        Text("Review at least \(minReviews - reviewedCount) more drafts to enable Approve All")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
                 }
                 
                 Spacer()
                 
-                Button("Approve All Remaining") {
-                    for i in vm.drafts.indices {
-                        if vm.drafts[i].status == .pending {
-                            vm.drafts[i].status = .approved
+                if !vm.drafts.isEmpty {
+                    Button("Approve All Remaining") {
+                        for i in vm.drafts.indices {
+                            if vm.drafts[i].status == .pending {
+                                vm.drafts[i].status = .approved
+                            }
                         }
                     }
+                    .buttonStyle(.bordered)
+                    .disabled(vm.drafts.count > 10 && reviewedCount < 10)
+                    
+                    Button {
+                        vm.currentStep = .send
+                    } label: {
+                        Label("Ready to Send", systemImage: "paperplane.fill")
+                            .font(.body.bold())
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color(hex: "#8b5cf6"))
+                    .disabled(approvedCount == 0)
                 }
-                .buttonStyle(.bordered)
-                .disabled(reviewedCount < 10)
-                
-                Button {
-                    vm.currentStep = .send
-                } label: {
-                    Label("Ready to Send", systemImage: "paperplane.fill")
-                        .font(.body.bold())
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color(hex: "#8b5cf6"))
-                .disabled(approvedCount == 0)
             }
             .padding(16)
             .background(.bar)
@@ -158,30 +202,52 @@ struct DraftCard: View {
                 Spacer()
                 
                 // Quality badge
-                Image(systemName: draft.qualityScore.grade.icon)
-                    .foregroundColor(Color(hex: draft.qualityScore.grade.colorHex))
+                if draft.status != .failed {
+                    Image(systemName: draft.qualityScore.grade.icon)
+                        .foregroundColor(Color(hex: draft.qualityScore.grade.colorHex))
+                }
                 
-                // Status
-                if draft.status == .approved {
+                // Status indicator
+                switch draft.status {
+                case .approved:
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
+                case .failed:
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.red)
+                case .generating:
+                    ProgressView()
+                        .controlSize(.small)
+                case .rejected:
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.gray)
+                default:
+                    EmptyView()
                 }
             }
             
-            Text(draft.subject)
-                .font(.body.weight(.semibold))
+            if draft.status == .failed {
+                Text(draft.subject)
+                    .font(.body.weight(.semibold))
+                    .foregroundColor(.red)
+            } else {
+                Text(draft.subject)
+                    .font(.body.weight(.semibold))
+            }
             
             Text(draft.body.prefix(120) + (draft.body.count > 120 ? "..." : ""))
                 .font(.callout)
-                .foregroundColor(.secondary)
+                .foregroundColor(draft.status == .failed ? .red.opacity(0.7) : .secondary)
                 .lineLimit(2)
             
             HStack(spacing: 8) {
-                Button(action: onEdit) {
-                    Label("Edit", systemImage: "pencil")
-                        .font(.caption)
+                if draft.status != .failed {
+                    Button(action: onEdit) {
+                        Label("Edit", systemImage: "pencil")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
                 
                 Button(action: onRegenerate) {
                     Label("Regenerate", systemImage: "arrow.counterclockwise")
@@ -192,7 +258,7 @@ struct DraftCard: View {
                 
                 Spacer()
                 
-                if draft.status != .approved {
+                if draft.status != .approved && draft.status != .failed {
                     Button(action: onApprove) {
                         Label("Approve", systemImage: "checkmark")
                             .font(.caption)
@@ -207,7 +273,12 @@ struct DraftCard: View {
         .cornerRadius(12)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(draft.status == .approved ? Color.green.opacity(0.3) : Color.clear, lineWidth: 1)
+                .stroke(
+                    draft.status == .approved ? Color.green.opacity(0.3)
+                    : draft.status == .failed ? Color.red.opacity(0.3)
+                    : Color.clear,
+                    lineWidth: 1
+                )
         )
     }
 }

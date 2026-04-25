@@ -47,6 +47,11 @@ struct MainView: View {
                             isHovered: sidebarHover == step
                         ) {
                             if step.rawValue <= vm.currentStep.rawValue {
+                                // Warn if navigating away during generation
+                                if vm.isGenerating && vm.currentStep == .drafts && step != .drafts {
+                                    vm.showError("Email generation is in progress.\n\nCancel generation first or wait for it to complete before navigating away.")
+                                    return
+                                }
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     vm.currentStep = step
                                 }
@@ -55,6 +60,9 @@ struct MainView: View {
                         .onHover { hovering in
                             sidebarHover = hovering ? step : nil
                         }
+                        .help(step.rawValue > vm.currentStep.rawValue
+                              ? "Complete \(AppStep(rawValue: step.rawValue - 1)?.title ?? "previous") step first"
+                              : step.title)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -109,6 +117,7 @@ struct MainView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(",", modifiers: .command)
             }
             .frame(minWidth: 220, idealWidth: 240)
         } detail: {
@@ -146,18 +155,75 @@ struct MainView: View {
                             removal: .opacity.combined(with: .move(edge: .leading))
                         ))
                 }
+                
+                // Completion Banner overlay
+                if vm.showCompletionBanner {
+                    VStack {
+                        HStack(spacing: 10) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                            Text(vm.completionMessage)
+                                .font(.callout.weight(.medium))
+                            Spacer()
+                            Button {
+                                withAnimation { vm.showCompletionBanner = false }
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(12)
+                        .background(.regularMaterial)
+                        .cornerRadius(10)
+                        .shadow(color: .black.opacity(0.1), radius: 8, y: 4)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 12)
+                        
+                        Spacer()
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: vm.currentStep)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .alert("Error", isPresented: $vm.showError) {
-            Button("OK") { vm.showError = false }
+            if vm.canRetry {
+                Button("Retry") { vm.performRetry() }
+                    .keyboardShortcut(.defaultAction)
+                Button("Cancel", role: .cancel) { vm.showError = false }
+            } else {
+                Button("OK") { vm.showError = false }
+            }
         } message: {
             Text(vm.errorMessage ?? "An unknown error occurred.")
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .environmentObject(vm)
+        }
+        // Keyboard shortcuts for step navigation
+        .background(
+            Group {
+                Button("") { navigateToStep(0) }.keyboardShortcut("1", modifiers: .command)
+                Button("") { navigateToStep(1) }.keyboardShortcut("2", modifiers: .command)
+                Button("") { navigateToStep(2) }.keyboardShortcut("3", modifiers: .command)
+                Button("") { navigateToStep(3) }.keyboardShortcut("4", modifiers: .command)
+                Button("") { navigateToStep(4) }.keyboardShortcut("5", modifiers: .command)
+            }
+            .frame(width: 0, height: 0)
+            .opacity(0)
+        )
+    }
+    
+    private func navigateToStep(_ rawValue: Int) {
+        guard let step = AppStep(rawValue: rawValue),
+              step.rawValue <= vm.currentStep.rawValue else { return }
+        if vm.isGenerating && vm.currentStep == .drafts && step != .drafts { return }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            vm.currentStep = step
         }
     }
 }

@@ -52,7 +52,8 @@ protocol EmailSenderProvider {
         fromName: String,
         subject: String,
         textBody: String,
-        htmlBody: String
+        htmlBody: String,
+        attachmentURL: URL?
     ) async throws -> SendResult
     
     /// Test the connection/credentials

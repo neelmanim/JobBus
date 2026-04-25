@@ -31,112 +31,168 @@ struct Step3_ContactsView: View {
                 
                 // Source Buttons
                 HStack(spacing: 12) {
-                    Button { Task { await vm.searchContacts() } } label: {
-                        Label("Apollo Search", systemImage: "magnifyingglass")
+                    Button {
+                        Task { await vm.searchContacts() }
+                    } label: {
+                        if vm.isSearching {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Searching...")
+                            }
+                        } else {
+                            Label("Apollo Search", systemImage: "magnifyingglass")
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Color(hex: "#8b5cf6"))
+                    .disabled(vm.isSearching || vm.isGenerating || vm.isLoading)
+                    
+                    if vm.isSearching {
+                        Button {
+                            vm.cancelSearch()
+                        } label: {
+                            Label("Cancel", systemImage: "xmark.circle")
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.red)
+                    }
                     
                     Button { showCSVImport = true } label: {
                         Label("Import CSV", systemImage: "doc.text.fill")
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Color(hex: "#3b82f6"))
+                    .disabled(vm.isSearching || vm.isGenerating)
                     
                     Button { showManualEntry = true } label: {
                         Label("Manual Entry", systemImage: "pencil.circle.fill")
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Color(hex: "#10b981"))
+                    .disabled(vm.isSearching || vm.isGenerating)
+                }
+                
+                // Loading Message
+                if vm.isSearching {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(vm.loadingMessage)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
                 }
                 
                 // Summary
-                HStack(spacing: 16) {
-                    Text("\(vm.contacts.count) total contacts")
-                        .font(.subheadline.bold())
-                    
-                    let sources = Dictionary(grouping: vm.contacts, by: \.source)
-                    ForEach(Array(sources.keys.sorted(by: { $0.rawValue < $1.rawValue })), id: \.self) { source in
-                        Text("\(source.rawValue): \(sources[source]?.count ?? 0)")
-                            .font(.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color(hex: source.color).opacity(0.15))
-                            .foregroundColor(Color(hex: source.color))
-                            .cornerRadius(8)
+                if !vm.contacts.isEmpty {
+                    HStack(spacing: 16) {
+                        Text("\(vm.contacts.count) total contacts")
+                            .font(.subheadline.bold())
+                        
+                        let sources = Dictionary(grouping: vm.contacts, by: \.source)
+                        ForEach(Array(sources.keys.sorted(by: { $0.rawValue < $1.rawValue })), id: \.self) { source in
+                            Text("\(source.rawValue): \(sources[source]?.count ?? 0)")
+                                .font(.caption)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color(hex: source.color).opacity(0.15))
+                                .foregroundColor(Color(hex: source.color))
+                                .cornerRadius(8)
+                        }
                     }
+                    
+                    // Search + Filter
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.secondary)
+                        TextField("Search contacts...", text: $searchText)
+                            .textFieldStyle(.plain)
+                    }
+                    .padding(8)
+                    .background(.regularMaterial)
+                    .cornerRadius(8)
+                    .padding(.horizontal, 20)
                 }
-                
-                // Search + Filter
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                    TextField("Search contacts...", text: $searchText)
-                        .textFieldStyle(.plain)
-                }
-                .padding(8)
-                .background(.regularMaterial)
-                .cornerRadius(8)
-                .padding(.horizontal, 20)
             }
             .padding(.top, 24)
             .padding(.bottom, 12)
             
-            // Contacts Table
-            Table(filteredContacts) {
-                TableColumn("") { contact in
-                    Toggle("", isOn: Binding(
-                        get: { contact.isSelected },
-                        set: { val in
-                            if let i = vm.contacts.firstIndex(where: { $0.id == contact.id }) {
-                                vm.contacts[i].isSelected = val
-                            }
-                        }
-                    ))
-                }
-                .width(30)
-                
-                TableColumn("Source") { contact in
-                    Image(systemName: contact.source.icon)
-                        .foregroundColor(Color(hex: contact.source.color))
-                }
-                .width(40)
-                
-                TableColumn("Name") { contact in
-                    Text(contact.fullName)
-                        .font(.body.weight(.medium))
-                }
-                .width(min: 120, ideal: 160)
-                
-                TableColumn("Title") { contact in
-                    Text(contact.title)
-                        .font(.callout)
+            if vm.contacts.isEmpty && !vm.isSearching {
+                // Empty state
+                Spacer()
+                VStack(spacing: 16) {
+                    Image(systemName: "person.3.fill")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary.opacity(0.4))
+                    Text("No contacts yet")
+                        .font(.title2.weight(.medium))
                         .foregroundColor(.secondary)
-                }
-                .width(min: 120, ideal: 180)
-                
-                TableColumn("Company") { contact in
-                    Text(contact.company)
+                    Text("Search Apollo, import a CSV, or add contacts manually to get started.")
                         .font(.callout)
+                        .foregroundColor(.secondary.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 350)
                 }
-                .width(min: 100, ideal: 140)
-                
-                TableColumn("Email") { contact in
-                    Text(contact.email)
-                        .font(.callout)
-                        .foregroundColor(contact.email.isEmpty ? .red : .primary)
+                Spacer()
+            } else {
+                // Contacts Table
+                Table(filteredContacts) {
+                    TableColumn("") { contact in
+                        Toggle("", isOn: Binding(
+                            get: { contact.isSelected },
+                            set: { val in
+                                if let i = vm.contacts.firstIndex(where: { $0.id == contact.id }) {
+                                    vm.contacts[i].isSelected = val
+                                }
+                            }
+                        ))
+                    }
+                    .width(30)
+                    
+                    TableColumn("Source") { contact in
+                        Image(systemName: contact.source.icon)
+                            .foregroundColor(Color(hex: contact.source.color))
+                    }
+                    .width(40)
+                    
+                    TableColumn("Name") { contact in
+                        Text(contact.fullName)
+                            .font(.body.weight(.medium))
+                    }
+                    .width(min: 120, ideal: 160)
+                    
+                    TableColumn("Title") { contact in
+                        Text(contact.title)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
+                    .width(min: 120, ideal: 180)
+                    
+                    TableColumn("Company") { contact in
+                        Text(contact.company)
+                            .font(.callout)
+                    }
+                    .width(min: 100, ideal: 140)
+                    
+                    TableColumn("Email") { contact in
+                        Text(contact.email)
+                            .font(.callout)
+                            .foregroundColor(contact.email.isEmpty ? .red : .primary)
+                    }
+                    .width(min: 150, ideal: 200)
+                    
+                    TableColumn("Type") { contact in
+                        Text(contact.recipientType.label)
+                            .font(.caption)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color(hex: "#8b5cf6").opacity(0.12))
+                            .cornerRadius(6)
+                    }
+                    .width(min: 80, ideal: 110)
                 }
-                .width(min: 150, ideal: 200)
-                
-                TableColumn("Type") { contact in
-                    Text(contact.recipientType.label)
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color(hex: "#8b5cf6").opacity(0.12))
-                        .cornerRadius(6)
-                }
-                .width(min: 80, ideal: 110)
             }
             
             // Bottom Bar
@@ -149,15 +205,35 @@ struct Step3_ContactsView: View {
                 Spacer()
                 
                 Button {
-                    vm.currentStep = .drafts
                     Task { await vm.generateDrafts() }
                 } label: {
-                    Label("Compose Emails", systemImage: "envelope.fill")
-                        .font(.body.bold())
+                    if vm.isGenerating {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Generating...")
+                        }
+                    } else {
+                        // Smart label: show what the button will actually do
+                        let existingIds = Set(vm.drafts.filter { $0.status != .failed }.map { $0.contactId })
+                        let selectedIds = Set(vm.contacts.filter { $0.isSelected && !$0.email.isEmpty }.map { $0.id })
+                        let newCount = selectedIds.subtracting(existingIds).count
+                        
+                        if newCount == 0 && !vm.drafts.isEmpty {
+                            Label("View Drafts", systemImage: "envelope.open.fill")
+                                .font(.body.bold())
+                        } else if newCount < selected {
+                            Label("Compose \(newCount) New", systemImage: "envelope.fill")
+                                .font(.body.bold())
+                        } else {
+                            Label("Compose Emails", systemImage: "envelope.fill")
+                                .font(.body.bold())
+                        }
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color(hex: "#8b5cf6"))
-                .disabled(selected == 0)
+                .disabled(selected == 0 || vm.isGenerating || vm.isSearching)
             }
             .padding(16)
             .background(.bar)

@@ -38,6 +38,26 @@ struct Step5_SendView: View {
                     .padding(.horizontal, 40)
                 }
                 
+                // No approved drafts warning
+                if approvedCount == 0 && vm.campaignStatus == .idle {
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("No approved emails")
+                                .font(.subheadline.bold())
+                            Text("Go back to Compose and approve at least one draft before launching.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.08))
+                    .cornerRadius(8)
+                    .padding(.horizontal, 40)
+                }
+                
                 // Progress Ring
                 ZStack {
                     Circle()
@@ -88,7 +108,7 @@ struct Step5_SendView: View {
                 .padding(.horizontal, 40)
                 
                 // Paused Message
-                if vm.isPaused {
+                if vm.campaignStatus == .paused {
                     HStack {
                         Image(systemName: "pause.circle.fill")
                             .foregroundColor(.orange)
@@ -97,6 +117,21 @@ struct Step5_SendView: View {
                     }
                     .padding(12)
                     .background(Color.orange.opacity(0.1))
+                    .cornerRadius(8)
+                    .padding(.horizontal, 40)
+                }
+                
+                // Running message
+                if vm.campaignStatus == .running {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(vm.loadingMessage)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(12)
+                    .background(.regularMaterial)
                     .cornerRadius(8)
                     .padding(.horizontal, 40)
                 }
@@ -115,8 +150,11 @@ struct Step5_SendView: View {
                                 Image(systemName: record.status == .sent ? "checkmark.circle.fill" : "xmark.circle.fill")
                                     .foregroundColor(record.status == .sent ? .green : .red)
                                     .font(.caption)
+                                Text(record.recipientName)
+                                    .font(.caption.weight(.medium))
                                 Text(record.recipientEmail)
                                     .font(.caption)
+                                    .foregroundColor(.secondary)
                                 if let error = record.errorMessage {
                                     Text("(\(error))")
                                         .font(.caption2)
@@ -175,14 +213,32 @@ struct Step5_SendView: View {
                         .tint(.red)
                         
                     case .complete:
-                        Label("Campaign Complete", systemImage: "checkmark.seal.fill")
-                            .foregroundColor(.green)
-                            .font(.title3.bold())
+                        VStack(spacing: 8) {
+                            Label("Campaign Complete", systemImage: "checkmark.seal.fill")
+                                .foregroundColor(.green)
+                                .font(.title3.bold())
+                            Text("\(vm.sentCount) sent, \(vm.failedCount) failed")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                         
                     case .stopped:
-                        Label("Campaign Stopped", systemImage: "stop.circle.fill")
-                            .foregroundColor(.red)
-                            .font(.title3.bold())
+                        VStack(spacing: 8) {
+                            Label("Campaign Stopped", systemImage: "stop.circle.fill")
+                                .foregroundColor(.red)
+                                .font(.title3.bold())
+                            Text("\(vm.sentCount) sent before stop")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            
+                            Button {
+                                vm.campaignStatus = .idle
+                            } label: {
+                                Label("Reset", systemImage: "arrow.counterclockwise")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.bordered)
+                        }
                     }
                 }
                 .padding(.top, 8)
@@ -272,5 +328,6 @@ struct ConfirmSendSheet: View {
         }
         .padding(32)
         .frame(width: 400)
+        .onAppear { confirmText = "" }
     }
 }

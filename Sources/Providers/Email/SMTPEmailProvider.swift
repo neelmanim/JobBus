@@ -22,7 +22,8 @@ class SMTPEmailProvider: EmailSenderProvider {
     }
     
     func send(to: String, toName: String, from: String, fromName: String,
-              subject: String, textBody: String, htmlBody: String) async throws -> SendResult {
+              subject: String, textBody: String, htmlBody: String,
+              attachmentURL: URL? = nil) async throws -> SendResult {
         // For localhost/MailHog: no password required
         if !isLocalhost {
             guard !password.isEmpty else { throw ProviderError.notConfigured("SMTP password not set. Go to Settings → Email to add your password.") }
@@ -49,7 +50,8 @@ class SMTPEmailProvider: EmailSenderProvider {
                     let mime = self.buildMIME(
                         from: from, fromName: fromName,
                         to: to, toName: toName,
-                        subject: subject, textBody: textBody, htmlBody: htmlBody
+                        subject: subject, textBody: textBody, htmlBody: htmlBody,
+                        attachmentURL: attachmentURL
                     )
                     try smtp.sendMail(from: from, to: to, data: mime)
                     smtp.quit()
@@ -64,17 +66,21 @@ class SMTPEmailProvider: EmailSenderProvider {
     func testConnection() async throws -> Bool {
         let result = try await send(
             to: "", toName: "", from: "", fromName: "",
-            subject: "", textBody: "", htmlBody: ""
+            subject: "", textBody: "", htmlBody: "",
+            attachmentURL: nil
         )
         return result.success
     }
     
-    // MARK: - MIME Builder (table-based HTML that won't break)
+    // MARK: - MIME Builder (supports attachments)
     
     private func buildMIME(from: String, fromName: String, to: String, toName: String,
-                           subject: String, textBody: String, htmlBody: String) -> String {
+                           subject: String, textBody: String, htmlBody: String,
+                           attachmentURL: URL?) -> String {
         let boundary = "----JobBus-\(UUID().uuidString)"
+        let altBoundary = "----JobBus-Alt-\(UUID().uuidString)"
         let date = DateFormatter.rfc2822.string(from: Date())
+        let hasAttachment = attachmentURL != nil
         
         var mime = ""
         mime += "From: \(fromName) <\(from)>\r\n"
@@ -82,27 +88,71 @@ class SMTPEmailProvider: EmailSenderProvider {
         mime += "Subject: \(subject)\r\n"
         mime += "Date: \(date)\r\n"
         mime += "MIME-Version: 1.0\r\n"
-        mime += "Content-Type: multipart/alternative; boundary=\"\(boundary)\"\r\n"
         mime += "X-Mailer: JobBus/1.0\r\n"
-        mime += "\r\n"
         
-        // Plain text part
-        mime += "--\(boundary)\r\n"
-        mime += "Content-Type: text/plain; charset=UTF-8\r\n"
-        mime += "Content-Transfer-Encoding: quoted-printable\r\n"
-        mime += "\r\n"
-        mime += textBody + "\r\n"
-        mime += "\r\n"
+        if hasAttachment {
+            // multipart/mixed wraps the body (alternative) + attachment
+            mime += "Content-Type: multipart/mixed; boundary=\"\(boundary)\"\r\n"
+            mime += "\r\n"
+            
+            // Part 1: Email body (alternative — plain + HTML)
+            mime += "--\(boundary)\r\n"
+            mime += "Content-Type: multipart/alternative; boundary=\"\(altBoundary)\"\r\n"
+            mime += "\r\n"
+            
+            // Plain text
+            mime += "--\(altBoundary)\r\n"
+            mime += "Content-Type: text/plain; charset=UTF-8\r\n"
+            mime += "Content-Transfer-Encoding: quoted-printable\r\n"
+            mime += "\r\n"
+            mime += textBody + "\r\n\r\n"
+            
+            // HTML
+            mime += "--\(altBoundary)\r\n"
+            mime += "Content-Type: text/html; charset=UTF-8\r\n"
+            mime += "Content-Transfer-Encoding: quoted-printable\r\n"
+            mime += "\r\n"
+            mime += htmlBody + "\r\n\r\n"
+            
+            mime += "--\(altBoundary)--\r\n"
+            
+            // Part 2: File attachment
+            if let url = attachmentURL, let fileData = try? Data(contentsOf: url) {
+                let filename = url.lastPathComponent
+                let mimeType = filename.hasSuffix(".pdf") ? "application/pdf" : "application/octet-stream"
+                let base64 = fileData.base64EncodedString(options: .lineLength76Characters)
+                
+                mime += "--\(boundary)\r\n"
+                mime += "Content-Type: \(mimeType); name=\"\(filename)\"\r\n"
+                mime += "Content-Disposition: attachment; filename=\"\(filename)\"\r\n"
+                mime += "Content-Transfer-Encoding: base64\r\n"
+                mime += "\r\n"
+                mime += base64 + "\r\n\r\n"
+            }
+            
+            mime += "--\(boundary)--\r\n"
+        } else {
+            // No attachment — simple multipart/alternative
+            mime += "Content-Type: multipart/alternative; boundary=\"\(boundary)\"\r\n"
+            mime += "\r\n"
+            
+            // Plain text part
+            mime += "--\(boundary)\r\n"
+            mime += "Content-Type: text/plain; charset=UTF-8\r\n"
+            mime += "Content-Transfer-Encoding: quoted-printable\r\n"
+            mime += "\r\n"
+            mime += textBody + "\r\n\r\n"
+            
+            // HTML part
+            mime += "--\(boundary)\r\n"
+            mime += "Content-Type: text/html; charset=UTF-8\r\n"
+            mime += "Content-Transfer-Encoding: quoted-printable\r\n"
+            mime += "\r\n"
+            mime += htmlBody + "\r\n\r\n"
+            
+            mime += "--\(boundary)--\r\n"
+        }
         
-        // HTML part — table-based, inline CSS, won't break in any client
-        mime += "--\(boundary)\r\n"
-        mime += "Content-Type: text/html; charset=UTF-8\r\n"
-        mime += "Content-Transfer-Encoding: quoted-printable\r\n"
-        mime += "\r\n"
-        mime += htmlBody + "\r\n"
-        mime += "\r\n"
-        
-        mime += "--\(boundary)--\r\n"
         return mime
     }
 }

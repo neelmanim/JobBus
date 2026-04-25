@@ -40,6 +40,13 @@ class EmailWriter {
     }
     
     private func buildPrompt(contact: Contact, resume: ResumeProfile) -> String {
+        let companyInfo: String
+        if contact.company.isEmpty {
+            companyInfo = "(Company unknown — do NOT use placeholders like [Company Name]. Instead, reference their role or industry.)"
+        } else {
+            companyInfo = contact.company
+        }
+        
         return """
         Write a personalized cold outreach email from a job seeker to a professional.
         
@@ -54,7 +61,7 @@ class EmailWriter {
         RECIPIENT:
         Name: \(contact.firstName) \(contact.lastName)
         Title: \(contact.title)
-        Company: \(contact.company)
+        Company: \(companyInfo)
         Type: \(contact.recipientType.label)
         Location: \(contact.location)
         
@@ -65,7 +72,7 @@ class EmailWriter {
         1. Email must be under 150 words (body only, excluding signature)
         2. Use the recipient's FIRST NAME only (not full name, not "Dear")
         3. Sound like a real human who researched them, NOT a template
-        4. Reference their company by name at least once
+        4. If company name is provided, reference it by name at least once
         5. Include one specific, quantifiable achievement from sender profile
         6. End with a soft, low-commitment call to action
         7. NO buzzwords: "passionate", "motivated", "synergy", "leverage"
@@ -73,8 +80,9 @@ class EmailWriter {
         9. NO exclamation marks
         10. NO salary or compensation mentions
         11. Do NOT include a signature block — it will be added automatically
+        12. NEVER use square-bracket placeholders like [Company Name], [Your Name], [Position] — use the actual values provided above
         
-        FORMAT — Return EXACTLY like this (no markdown):
+        FORMAT — Return EXACTLY like this (no markdown, no extra text):
         SUBJECT: [Your subject line here]
         
         BODY:
