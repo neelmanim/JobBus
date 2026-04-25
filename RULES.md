@@ -46,8 +46,10 @@ feature-branch → develop → main
 1. **Protocol-based modularity** — Every external service (search, AI, email) is behind a Swift protocol. Swap providers in Settings without code changes.
 2. **No third-party UI frameworks** — Pure SwiftUI. No Electron, no web views.
 3. **No third-party networking** — Raw `URLSession` for APIs, raw socket `InputStream`/`OutputStream` for SMTP. Full control over every byte.
-4. **Keychain for secrets** — API keys and passwords stored in macOS Keychain, never in files or UserDefaults.
+4. **Encrypted file storage for secrets** — API keys and passwords stored encrypted (XOR + base64) in `~/Library/Application Support/JobBus/credentials.dat`. Per-machine encryption key derived from username. Never stored as plaintext on disk.
 5. **Sandbox-first** — Sandbox mode is ON by default. Must be explicitly disabled before real emails can be sent.
+6. **Application-wide logging** — Thread-safe `AppLogger` writes to both console and timestamped rolling log files in `~/Library/Application Support/JobBus/logs/`. Keeps last 20 sessions.
+7. **Custom AI prompt support** — Users can inject custom instructions into the email generation prompt via Settings → AI Prompt tab.
 
 ### Source Structure
 
@@ -56,9 +58,9 @@ Sources/
 ├── JobBusApp.swift                          # @main entry point
 │
 ├── Models/
-│   ├── AppSettings.swift                    # Settings + Keychain + persistence
-│   ├── Contact.swift                        # Contact, ContactSource, RecipientType
-│   ├── EmailDraft.swift                     # Draft, QualityScore, SendRecord
+│   ├── AppSettings.swift                    # Settings + KeychainService + APIKeyFileStore + persistence
+│   ├── Contact.swift                        # Contact, ContactSource, RecipientType, ContactStatus
+│   ├── EmailDraft.swift                     # EmailDraft, EmailQualityScore, QualityGrade, SendRecord, SendStatus, CampaignStatus
 │   └── ResumeProfile.swift                  # ResumeProfile, SearchStrategy
 │
 ├── Protocols/
@@ -66,14 +68,15 @@ Sources/
 │                                            # EmailSenderProvider, EmailEnrichmentProvider
 │
 ├── Providers/                               # Concrete implementations of protocols
-│   ├── AI/AIProviders.swift                 # OllamaProvider, GeminiFlashProvider
+│   ├── AI/AIProviders.swift                 # OllamaProvider, GeminiFlashProvider, GroqProvider
 │   ├── Email/SMTPEmailProvider.swift        # SMTPEmailProvider, SMTPClient, EmailTemplateBuilder
 │   └── Search/ApolloSearchProvider.swift    # ApolloSearchProvider (search + enrich)
 │
 ├── Services/
 │   ├── AI/
-│   │   ├── EmailWriter.swift               # AI prompt engineering + email composition
+│   │   ├── EmailWriter.swift               # AI prompt engineering + email composition (supports custom instructions)
 │   │   └── ResumeAnalyzer.swift             # Resume → profile + strategy extraction
+│   ├── AppLogger.swift                      # Thread-safe logging service (console + file)
 │   ├── DocumentParser/
 │   │   ├── DOCXParserService.swift          # DOCX via ZIP extraction of word/document.xml
 │   │   └── PDFParserService.swift           # PDF via Apple PDFKit
@@ -81,20 +84,25 @@ Sources/
 │   └── Safety/QualityScorer.swift           # 8-point scorer + duplicate detector
 │
 ├── ViewModels/
-│   └── AppViewModel.swift                   # Central pipeline orchestrator
+│   └── AppViewModel.swift                   # Central pipeline orchestrator (campaignTotal for stable progress)
 │
 ├── Views/
 │   ├── MainView.swift                       # NavigationSplitView + sidebar steps
-│   ├── Settings/SettingsView.swift          # Tabbed settings (providers, email, campaign)
+│   ├── Settings/SettingsView.swift          # 4-tab settings (Providers, Email, Campaign, AI Prompt)
 │   └── Steps/
 │       ├── Step1_ResumeView.swift           # Drop zone + AI analysis display
 │       ├── Step2_StrategyView.swift         # Filter builder + contact count slider
 │       ├── Step3_ContactsView.swift         # Multi-source table + CSV import + manual entry
 │       ├── Step4_DraftsView.swift           # Draft review + quality badges + edit/regenerate
-│       └── Step5_SendView.swift             # Campaign progress ring + controls
+│       └── Step5_SendView.swift             # Campaign progress ring + controls (stable campaignTotal)
 │
-└── Resources/
-    └── AppIcon.png
+├── Resources/
+│   └── AppIcon.png
+│
+Tests/
+└── JobBusTests/
+    └── JobBusTests.swift                    # Unit tests (QualityScorer, DuplicateDetector, CSVImporter,
+                                             # EmailWriter parser, AppSettings, EmailQualityScore)
 ```
 
 ---
@@ -121,7 +129,7 @@ All providers conform to protocols in `Protocols.swift`. To add a new provider:
 |---|---|---|
 | Ollama (Local) | `AIProvider` | ✅ Implemented |
 | Gemini Flash | `AIProvider` | ✅ Implemented |
-| Groq | `AIProvider` | 🔲 Placeholder |
+| Groq | `AIProvider` | ✅ Implemented |
 
 ### Email Providers
 
@@ -146,6 +154,33 @@ Step 4: AI Compose → Draft per contact → Quality score → Review/edit
             ↓
 Step 5: Campaign → Type-to-confirm → Throttled send → Live progress
 ```
+
+### Email Generation Pipeline Detail
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌────────────────┐     ┌─────────────────┐
+│  Resume PDF     │     │  Contact List    │     │  AI Provider   │     │  SMTP Send      │
+│                 │     │                  │     │                │     │                 │
+│  • Name         │────▶│  • First Name    │────▶│  • Prompt      │────▶│  • Quality Check│
+│  • Role         │     │  • Title         │     │  • Custom      │     │  • HTML Format  │
+│  • Skills       │     │  • Company       │     │    Instructions│     │  • Attach Resume│
+│  • Achievements │     │  • Type          │     │  • Generate    │     │  • MIME Build    │
+│  • Experience   │     │  • Location      │     │    Email       │     │  • Throttle     │
+└─────────────────┘     └──────────────────┘     └────────────────┘     └─────────────────┘
+```
+
+**Data Mapping:**
+
+| Source | Field | Maps To |
+|---|---|---|
+| Resume | Name | Sender name & signature |
+| Resume | Skills (top 6) | Email body highlights |
+| Resume | Achievements (top 3) | Quantifiable proof points |
+| Resume | PDF file | SMTP attachment |
+| Contact | First Name | Email greeting |
+| Contact | Company | Company reference in body |
+| Contact | Recipient Type | Tone & approach style |
+| Settings | Custom Instructions | Additional AI prompt rules |
 
 ---
 
@@ -205,6 +240,7 @@ Each draft gets a score from 0–8:
 - **Inline CSS only** — no `<style>` blocks, no external CSS
 - **Max width 600px** — standard email container width
 - **Signature auto-appended** — from Settings, never in AI-generated body
+- **Resume PDF auto-attached** — restored from cached URL on app init
 
 ### Content Rules (Enforced via AI Prompt)
 
@@ -218,6 +254,7 @@ Each draft gets a score from 0–8:
 8. **NO** exclamation marks
 9. **NO** salary/compensation mentions
 10. **NO** signature block in AI output (added separately)
+11. **Custom instructions** from Settings → AI Prompt tab are injected between recipient type instructions and absolute rules
 
 ### Recipient-Specific Tone
 
@@ -233,6 +270,8 @@ Each draft gets a score from 0–8:
 
 ## 🔑 Credentials Storage
 
+Credentials are stored encrypted (XOR + base64) in `~/Library/Application Support/JobBus/credentials.dat`. Directory permissions set to 700 (owner-only). Encryption key derived from `NSUserName()` for per-machine uniqueness.
+
 | Secret | Keychain Key | Where Set |
 |---|---|---|
 | Apollo API Key | `apollo_api_key` | Settings → Providers tab |
@@ -242,6 +281,10 @@ Each draft gets a score from 0–8:
 | Groq API Key | `groq_api_key` | Settings → Providers tab |
 | SMTP Password | `smtp_password` | Settings → Email tab |
 
+**API key status is shown in Settings:**
+- ✅ Configured keys show masked preview (e.g., `gsk_••••••mqcQd`) with Change/Delete buttons
+- ⚠️ Not configured keys show warning with input field
+
 **NEVER** store credentials in:
 - Source code
 - UserDefaults
@@ -250,21 +293,66 @@ Each draft gets a score from 0–8:
 
 ---
 
-## 🧪 Testing Strategy
+## 📋 Settings Tabs
 
-### Sandbox Mode (Default)
+| Tab | Contents |
+|---|---|
+| **Providers** | Contact Search Provider (Apollo/Hunter/RocketReach) + API key status, AI Provider (Ollama/Gemini/Groq) + API key status |
+| **Email** | SMTP config (Gmail/Outlook/Custom), Email Signature fields |
+| **Campaign** | Sending rules (delay, daily limit, business hours), Safety (sandbox mode, Mailhog config) |
+| **AI Prompt** | Pipeline explainer, Data mapping table, Custom prompt instructions editor, Built-in prompt template preview |
+
+---
+
+## 📊 Logging System
+
+**Location:** `~/Library/Application Support/JobBus/logs/`
+
+| Feature | Detail |
+|---|---|
+| **Log levels** | DEBUG, INFO, WARN, ERROR |
+| **Output** | Console + timestamped log file per session |
+| **Thread safety** | Dedicated `DispatchQueue` |
+| **Auto-rotation** | Keeps last 20 session logs |
+| **Coverage** | App init, resume parsing, contact search, draft generation, AI API calls, SMTP delivery, campaign lifecycle |
+| **Context** | Each entry includes file, function, and line number |
+
+---
+
+## 🧪 Testing
+
+### Unit Tests
+
+Run unit tests with:
+
+```bash
+swift test
+```
+
+Tests cover:
+
+| Module | Tests |
+|---|---|
+| **QualityScorer** | Perfect score, spam detection, placeholder detection, weak phrase detection, name/company matching |
+| **DuplicateDetector** | Deduplication, case-insensitive matching, empty email handling |
+| **CSVImporter** | Column auto-detection, delimiter detection, name format parsing, email validation |
+| **EmailWriter** | Response parsing (SUBJECT/BODY markers, edge cases, markdown cleanup) |
+| **AppSettings** | Persistence (save/load/defaults), custom prompt instructions encoding |
+| **EmailQualityScore** | Score calculation, grade boundaries |
+
+### Sandbox Mode (Integration Testing)
 
 1. Install Mailhog: `brew install mailhog`
 2. Start: `mailhog`
 3. Dashboard: `http://localhost:8025`
 4. All emails route to Mailhog instead of real recipients
-5. Verify formatting, subject lines, personalization
+5. Verify formatting, subject lines, personalization, resume attachments
 
 ### Going Live Checklist
 
 - [ ] Reviewed at least 10 drafts manually
 - [ ] Tested full pipeline in sandbox mode
-- [ ] Checked 3+ emails in Mailhog for formatting
+- [ ] Checked 3+ emails in Mailhog for formatting + resume attachment
 - [ ] Turned OFF sandbox mode in Settings
 - [ ] Configured real SMTP email + app password
 - [ ] Set appropriate daily limit and delay
@@ -281,6 +369,9 @@ swift build
 
 # Run
 swift run
+
+# Test
+swift test
 
 # Open in Xcode (optional)
 open Package.swift
@@ -323,6 +414,14 @@ swift build -c release
 - **Free tier**: Yes
 - **Docs**: https://ai.google.dev/
 
+### Groq
+
+- **Endpoint**: `POST https://api.groq.com/openai/v1/chat/completions`
+- **Model**: `llama-3.3-70b-versatile`
+- **Free tier**: Yes, with rate limits (30 req/min, 14,400 tokens/min)
+- **Rate limit**: Exponential backoff with 3 retries
+- **Docs**: https://console.groq.com/docs
+
 ---
 
 ## 🚨 Edge Cases to Remember
@@ -340,6 +439,9 @@ swift build -c release
 11. **Credits exhausted** — Stop enrichment, return what we have so far
 12. **AI hallucination** — Quality scorer catches name/company mismatches
 13. **Gmail sending limits** — 500/day for regular accounts, configurable in Settings
+14. **Campaign counter stability** — `campaignTotal` captured once at launch to prevent negative pending counts
+15. **Resume attachment** — `restoreCachedResumeURL()` called on init to preserve attachment between sessions
+16. **AI response parsing** — Resilient 3-strategy parser handles missing SUBJECT/BODY markers, markdown, and edge cases
 
 ---
 
@@ -352,8 +454,19 @@ swift build -c release
 - **Async**: All network/AI calls are `async throws`
 - **UI updates**: All `@Published` properties on `@MainActor`
 - **Color hex**: Use `Color(hex: "#8b5cf6")` extension throughout
+- **Logging**: Use `AppLogger.shared` with `.info()`, `.debug()`, `.warn()`, `.error()` methods
+
+---
+
+## 🔄 Recent Changes
+
+| Date | Commit | Changes |
+|---|---|---|
+| 2025-04-25 | `8575feb` | Settings UI/UX: API key status indicators, AI Prompt tab, custom instructions |
+| 2025-04-25 | `36e5f72` | Campaign counter fix (stable campaignTotal), logging system, resume attachment fix |
+| 2025-04-24 | `7fb157f` | Initial Job Bus v1.0 release |
 
 ---
 
 *Last updated: 2026-04-25*
-*Commit: `7fb157f` — Job Bus v1.0*
+*Commit: `8575feb` — Settings UX + Custom AI Prompt + Unit Tests*
