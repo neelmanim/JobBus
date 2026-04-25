@@ -7,9 +7,11 @@ struct Step5_SendView: View {
     @State private var showConfirmDialog = false
     
     var approvedCount: Int { vm.drafts.filter { $0.status == .approved }.count }
+    /// Use campaignTotal (captured at launch) for progress; fall back to approvedCount pre-launch
+    var totalForProgress: Int { vm.campaignTotal > 0 ? vm.campaignTotal : approvedCount }
     var progress: Double {
-        let total = Double(approvedCount)
-        return total > 0 ? Double(vm.sentCount + vm.failedCount) / total : 0
+        let total = Double(totalForProgress)
+        return total > 0 ? min(Double(vm.sentCount + vm.failedCount) / total, 1.0) : 0
     }
     
     var body: some View {
@@ -73,7 +75,7 @@ struct Step5_SendView: View {
                         .animation(.easeInOut, value: progress)
                     
                     VStack(spacing: 4) {
-                        Text("\(vm.sentCount + vm.failedCount)/\(approvedCount)")
+                        Text("\(vm.sentCount + vm.failedCount)/\(totalForProgress)")
                             .font(.title.bold())
                         Text("\(Int(progress * 100))%")
                             .font(.title3)
@@ -89,7 +91,7 @@ struct Step5_SendView: View {
                 HStack(spacing: 16) {
                     StatCard(icon: "checkmark.circle.fill", label: "Sent", value: vm.sentCount, color: "#10b981")
                     StatCard(icon: "xmark.circle.fill", label: "Failed", value: vm.failedCount, color: "#ef4444")
-                    StatCard(icon: "clock.fill", label: "Pending", value: approvedCount - vm.sentCount - vm.failedCount, color: "#f59e0b")
+                    StatCard(icon: "clock.fill", label: "Pending", value: max(0, totalForProgress - vm.sentCount - vm.failedCount), color: "#f59e0b")
                 }
                 .padding(.horizontal, 40)
                 

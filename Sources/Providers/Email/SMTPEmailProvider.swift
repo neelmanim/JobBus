@@ -35,6 +35,7 @@ class SMTPEmailProvider: EmailSenderProvider {
             queue.async {
                 do {
                     let smtp = SMTPClient(host: self.host, port: self.port)
+                    log.debug("SMTP: connecting to \(self.host):\(self.port)")
                     try smtp.connect()
                     
                     // Skip TLS for localhost (MailHog / test servers)
@@ -55,8 +56,10 @@ class SMTPEmailProvider: EmailSenderProvider {
                     )
                     try smtp.sendMail(from: from, to: to, data: mime)
                     smtp.quit()
+                    log.debug("SMTP: message delivered to \(to)")
                     continuation.resume(returning: SendResult.success())
                 } catch {
+                    log.error("SMTP: send failed to \(to) — \(error.localizedDescription)")
                     continuation.resume(returning: SendResult.failure(error: error.localizedDescription))
                 }
             }

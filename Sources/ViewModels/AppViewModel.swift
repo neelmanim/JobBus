@@ -32,6 +32,7 @@ class AppViewModel: ObservableObject {
     // Sending progress
     @Published var sentCount = 0
     @Published var failedCount = 0
+    @Published var campaignTotal = 0
     
     // Completion banner
     @Published var showCompletionBanner = false
@@ -67,6 +68,14 @@ class AppViewModel: ObservableObject {
         restoreCachedResumeURL()
         
         requestNotificationPermission()
+        
+        log.section("APP LAUNCH")
+        log.info("AI Provider: \(settings.aiProvider.rawValue)")
+        log.info("Search Provider: \(settings.searchProvider.rawValue)")
+        log.info("Sandbox Mode: \(settings.sandboxMode)")
+        log.info("SMTP: \(settings.smtpEmail.isEmpty ? "Not configured" : settings.smtpEmail)")
+        log.info("Cached contacts: \(contacts.count)")
+        log.info("Resume URL: \(resumeFileURL?.path ?? "none")")
     }
     
     // MARK: - Provider Factory
@@ -148,8 +157,13 @@ class AppViewModel: ObservableObject {
             }
             
             loadingMessage = "AI analyzing your resume..."
+            log.section("RESUME PARSE")
+            log.info("File: \(url.lastPathComponent) (\(fileExtension))")
+            log.info("Extracted text: \(trimmed.count) chars")
             let profile = try await resumeAnalyzer.analyze(resumeText: text, ai: aiProvider)
             self.resumeProfile = profile
+            log.info("Profile: \(profile.name), \(profile.currentRole), \(profile.yearsExperience) yrs exp")
+            log.info("Skills: \(profile.skills.prefix(6).joined(separator: ", "))")
             
             // Copy resume to app support so it's always accessible for SMTP attachment
             // (file picker URLs are security-scoped and expire after the session)
@@ -163,9 +177,11 @@ class AppViewModel: ObservableObject {
                 try FileManager.default.copyItem(at: url, to: destURL)
                 url.stopAccessingSecurityScopedResource()
                 self.resumeFileURL = destURL
+                log.info("Resume copied to: \(destURL.path)")
             } catch {
                 // Fallback: use original URL (may work for non-sandboxed access)
                 self.resumeFileURL = url
+                log.warn("Resume copy failed: \(error.localizedDescription), using original URL")
             }
             
             loadingMessage = "Generating search strategy..."
@@ -239,6 +255,8 @@ class AppViewModel: ObservableObject {
         isLoading = true
         loadingMessage = "Searching for contacts via \(settings.searchProvider.rawValue)..."
         canRetry = false
+        log.section("CONTACT SEARCH")
+        log.info("Provider: \(settings.searchProvider.rawValue), Count: \(settings.contactCount)")
         
         searchTask = Task {
             do {
@@ -264,6 +282,7 @@ class AppViewModel: ObservableObject {
                 
                 // Cache contacts to disk for reuse
                 self.saveContactsCache()
+                log.info("Contacts found: \(enriched.count), unique: \(unique.count), dupes removed: \(dupes.count)")
                 
                 isSearching = false
                 isLoading = false
@@ -373,6 +392,7 @@ class AppViewModel: ObservableObject {
                 if Task.isCancelled { break }
                 
                 loadingMessage = "Composing email \(index + 1)/\(total) — \(contact.fullName) @ \(contact.company)..."
+                log.info("Generating draft \(index + 1)/\(total): \(contact.fullName) <\(contact.email)> @ \(contact.company)")
                 
                 do {
                     var draft = try await emailWriter.compose(contact: contact, resume: profile, ai: aiProvider)
@@ -394,6 +414,7 @@ class AppViewModel: ObservableObject {
                         failedDraft.body = "The AI returned an empty or too-short response (\(bodyText.count) chars).\n\nSubject parsed: \"\(draft.subject)\"\nBody parsed: \"\(bodyText.prefix(100))\"\n\nTap Regenerate to try again, or Edit to write manually."
                         updatedDrafts.append(failedDraft)
                         failureCount += 1
+                        log.warn("Draft FAILED (empty): \(contact.fullName) — body=\(bodyText.count) chars, subject=\"\(draft.subject)\"")
                     } else if (subjectHits + bodyHits) >= 2 {
                         // Multiple placeholders — template response, reject
                         var failedDraft = EmailDraft(contactId: contact.id)
@@ -415,6 +436,7 @@ class AppViewModel: ObservableObject {
                             }
                         }
                         updatedDrafts.append(draft)
+                        log.info("Draft OK: \(contact.fullName) — subject=\"\(draft.subject)\", body=\(bodyText.count) chars, quality=\(draft.qualityScore.grade)")
                     }
                     
                     // Update drafts progressively so user sees them appear
@@ -491,11 +513,19 @@ class AppViewModel: ObservableObject {
         failedCount = 0
         
         let approvedDrafts = drafts.filter { $0.status == .approved }
+        campaignTotal = approvedDrafts.count
         guard !approvedDrafts.isEmpty else {
             showError("No approved emails to send.\n\nGo back to Compose and approve at least one email draft.")
             campaignStatus = .idle
+            log.warn("Campaign aborted: no approved drafts")
             return
         }
+        
+        log.section("CAMPAIGN START")
+        log.info("Total to send: \(approvedDrafts.count)")
+        log.info("SMTP: \(settings.smtpEmail) → \(settings.sandboxMode ? "SANDBOX (localhost:\(settings.sandboxPort))" : "LIVE")")
+        log.info("Attachment: \(resumeFileURL?.lastPathComponent ?? "none")")
+        log.info("Delay: \(Int(settings.delaySeconds))s between emails")
         
         sendTask = Task {
             for (index, draft) in approvedDrafts.enumerated() {
@@ -550,6 +580,7 @@ class AppViewModel: ObservableObject {
                     if let draftIdx = drafts.firstIndex(where: { $0.id == draft.id }) {
                         drafts[draftIdx].status = .sent
                     }
+                    log.info("✅ SENT \(sentCount)/\(approvedDrafts.count): \(draft.recipientName) <\(draft.recipientEmail)> — \"\(draft.subject)\"")
                     sendRecords.append(SendRecord(
                         draftId: draft.id,
                         recipientEmail: draft.recipientEmail,
@@ -564,6 +595,7 @@ class AppViewModel: ObservableObject {
                     if let draftIdx = drafts.firstIndex(where: { $0.id == draft.id }) {
                         drafts[draftIdx].status = .failed
                     }
+                    log.error("❌ FAILED \(failedCount): \(draft.recipientName) <\(draft.recipientEmail)> — \(result?.errorMessage ?? "unknown error")")
                     sendRecords.append(SendRecord(
                         draftId: draft.id,
                         recipientEmail: draft.recipientEmail,
@@ -591,6 +623,8 @@ class AppViewModel: ObservableObject {
             
             if campaignStatus == .running {
                 campaignStatus = .complete
+                log.section("CAMPAIGN COMPLETE")
+                log.info("Sent: \(sentCount), Failed: \(failedCount), Total: \(approvedDrafts.count)")
                 postSystemNotification(
                     title: "Campaign Complete",
                     body: "\(sentCount) sent, \(failedCount) failed out of \(approvedDrafts.count) emails."
@@ -599,11 +633,12 @@ class AppViewModel: ObservableObject {
         }
     }
     
-    func pauseCampaign() { campaignStatus = .paused }
-    func resumeCampaign() { campaignStatus = .running }
+    func pauseCampaign() { campaignStatus = .paused; log.info("Campaign PAUSED at \(sentCount)/\(campaignTotal)") }
+    func resumeCampaign() { campaignStatus = .running; log.info("Campaign RESUMED") }
     func stopCampaign() {
         campaignStatus = .stopped
         sendTask?.cancel()
+        log.warn("Campaign STOPPED: \(sentCount) sent, \(failedCount) failed")
         postSystemNotification(title: "Campaign Stopped", body: "\(sentCount) sent, \(failedCount) failed before stop.")
     }
     

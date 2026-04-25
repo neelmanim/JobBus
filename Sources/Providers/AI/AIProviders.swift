@@ -55,13 +55,17 @@ class GeminiFlashProvider: AIProvider {
         guard !apiKey.isEmpty else { throw ProviderError.notConfigured("Gemini API key not set. Go to Settings → Providers to add your key from aistudio.google.com/apikey") }
         
         var lastError: Error?
+        log.debug("Gemini: starting generation (\(models.count) models available)")
         
         for model in models {
             do {
-                return try await callModel(model: model, prompt: prompt)
+                let result = try await callModel(model: model, prompt: prompt)
+                log.debug("Gemini: \(model) returned \(result.count) chars")
+                return result
             } catch ProviderError.rateLimited(let msg) {
                 // Try next model (different quota bucket)
                 lastError = ProviderError.rateLimited(msg)
+                log.warn("Gemini: \(model) rate limited, trying next...")
                 continue
             } catch {
                 throw error
@@ -134,9 +138,12 @@ class GroqProvider: AIProvider {
             }
             
             do {
-                return try await callGroq(prompt: prompt, key: key)
+                let result = try await callGroq(prompt: prompt, key: key)
+                log.debug("Groq: returned \(result.count) chars")
+                return result
             } catch ProviderError.rateLimited(let msg) {
                 lastError = ProviderError.rateLimited(msg)
+                log.warn("Groq: rate limited (attempt \(attempt + 1)/3), backing off...")
                 continue
             } catch {
                 throw error
