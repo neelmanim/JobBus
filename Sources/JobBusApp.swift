@@ -11,6 +11,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.setActivationPolicy(.regular)
         // Force activate so windows receive keyboard focus
         NSApplication.shared.activate(ignoringOtherApps: true)
+        
+        // Set app icon from bundled resource (SPM apps don't use Assets.xcassets)
+        if let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+           let iconImage = NSImage(contentsOf: iconURL) {
+            NSApplication.shared.applicationIconImage = iconImage
+        }
     }
     
     func applicationDidBecomeActive(_ notification: Notification) {
