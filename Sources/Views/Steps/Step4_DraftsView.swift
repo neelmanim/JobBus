@@ -300,10 +300,18 @@ struct StatBadge: View {
 // MARK: - Edit Draft Sheet
 struct EditDraftSheet: View {
     let draft: EmailDraft
-    @State private var subject: String = ""
-    @State private var emailBody: String = ""
+    @State private var subject: String
+    @State private var emailBody: String
     @Environment(\.dismiss) var dismiss
     let onSave: (String, String) -> Void
+    
+    init(draft: EmailDraft, onSave: @escaping (String, String) -> Void) {
+        self.draft = draft
+        self.onSave = onSave
+        // Initialize @State directly from draft — .onAppear is unreliable in sheets
+        _subject = State(initialValue: draft.subject)
+        _emailBody = State(initialValue: draft.body)
+    }
     
     var body: some View {
         VStack(spacing: 16) {
@@ -331,9 +339,5 @@ struct EditDraftSheet: View {
         }
         .padding(24)
         .frame(width: 650, height: 500)
-        .onAppear {
-            subject = draft.subject
-            emailBody = draft.body
-        }
     }
 }
