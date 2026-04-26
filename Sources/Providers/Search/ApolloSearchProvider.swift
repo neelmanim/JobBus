@@ -40,7 +40,7 @@ class ApolloSearchProvider: ContactSearchProvider, EmailEnrichmentProvider {
     }
     
     private func searchPage(strategy: SearchStrategy, page: Int, perPage: Int) async throws -> [Contact] {
-        let url = URL(string: "\(baseURL)/mixed_people/search")!
+        let url = URL(string: "\(baseURL)/mixed_people/api_search")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -231,7 +231,7 @@ class ApolloSearchProvider: ContactSearchProvider, EmailEnrichmentProvider {
     // MARK: - Validation
     
     func validateKey(_ key: String) async throws -> Bool {
-        let url = URL(string: "\(baseURL)/mixed_people/search")!
+        let url = URL(string: "\(baseURL)/mixed_people/api_search")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
