@@ -1,482 +1,261 @@
-# Job Bus — Project Rules & Reference
+# JobBus — Development Context & Rules
 
-> **Native macOS application for personalized, AI-powered job outreach.**
-> Built with SwiftUI · Swift Package Manager · macOS 14+
-
----
-
-## 📌 Repository
-
-| Item | Value |
-|---|---|
-| **Repo** | `git@github.com:neelmanim/JobBus.git` |
-| **HTTPS** | `https://github.com/neelmanim/JobBus` |
-| **Local Path** | `/Users/neelmani-mishra/Documents/TryingSomethingInteresting/JobBus/` |
-| **Auth** | SSH key (`~/.ssh/id_ed25519`) |
-| **Package Manager** | Swift Package Manager (`Package.swift`) |
-| **Min Target** | macOS 14.0 (Sonoma) |
-| **Dependencies** | `ZIPFoundation` (DOCX parsing) |
+> **Last Updated**: 2026-04-26 (v1.0.0 Launch Release)
+> **Status**: Production-ready, E2E tested, packaged for distribution
 
 ---
 
-## 🌿 Branch Strategy
+## 🏗️ What Is JobBus?
 
-| Branch | Purpose | Rules |
-|---|---|---|
-| `main` | Production-ready, stable | Never commit directly — merge from `develop` via PR |
-| `develop` | Active development | All new features and fixes go here first |
+A **native macOS desktop application** (SwiftUI + Swift 5.9) that automates personalized job outreach:
 
-### Workflow
-
-```
-feature-branch → develop → main
-```
-
-1. Create feature branches off `develop` for significant work
-2. Small fixes can go directly to `develop`
-3. Merge `develop` → `main` only when tested and stable
-4. Tag releases on `main` (e.g., `v1.0`, `v1.1`)
+1. **Parse** a resume (PDF/DOCX) → extract skills, experience, profile
+2. **Discover** contacts via Apollo.io / Hunter.io / RocketReach APIs
+3. **Generate** AI-powered personalized emails (Groq / OpenAI / Ollama)
+4. **Send** campaigns via SMTP with resume attachment, rate limiting, and safety checks
 
 ---
 
-## 🏗️ Architecture
-
-### Design Principles
-
-1. **Protocol-based modularity** — Every external service (search, AI, email) is behind a Swift protocol. Swap providers in Settings without code changes.
-2. **No third-party UI frameworks** — Pure SwiftUI. No Electron, no web views.
-3. **No third-party networking** — Raw `URLSession` for APIs, raw socket `InputStream`/`OutputStream` for SMTP. Full control over every byte.
-4. **Encrypted file storage for secrets** — API keys and passwords stored encrypted (XOR + base64) in `~/Library/Application Support/JobBus/credentials.dat`. Per-machine encryption key derived from username. Never stored as plaintext on disk.
-5. **Sandbox-first** — Sandbox mode is ON by default. Must be explicitly disabled before real emails can be sent.
-6. **Application-wide logging** — Thread-safe `AppLogger` writes to both console and timestamped rolling log files in `~/Library/Application Support/JobBus/logs/`. Keeps last 20 sessions.
-7. **Custom AI prompt support** — Users can inject custom instructions into the email generation prompt via Settings → AI Prompt tab.
-8. **Thin coordinator pattern** — `AppViewModel` is a UI coordinator (~430 lines). Business logic is decomposed into `ContactManager`, `DraftManager`, and `SendEngine`.
-9. **Campaign intelligence** — Pre-send analysis (0-100 score) with risk indicators and suggestions. Warn-only — never blocks sending.
-10. **Achievement rotation** — Round-robin achievement selection for email personalization. No hard-blocking on exhaustion.
-
-### Source Structure
+## 📁 Project Structure
 
 ```
-Sources/
-├── JobBusApp.swift                          # @main entry point
-│
-├── Models/
-│   ├── AppSettings.swift                    # Settings + KeychainService + APIKeyFileStore + persistence
-│   ├── Contact.swift                        # Contact, ContactSource, RecipientType, ContactStatus
-│   ├── EmailDraft.swift                     # EmailDraft, EmailQualityScore, QualityGrade, SendRecord, SendStatus, CampaignStatus
-│   └── ResumeProfile.swift                  # ResumeProfile, SearchStrategy
-│
-├── Protocols/
-│   └── Protocols.swift                      # ContactSearchProvider, AIProvider,
-│                                            # EmailSenderProvider, EmailEnrichmentProvider
-│
-├── Providers/                               # Concrete implementations of protocols
-│   ├── AI/AIProviders.swift                 # OllamaProvider, GeminiFlashProvider, GroqProvider
-│   ├── Email/SMTPEmailProvider.swift        # SMTPEmailProvider, SMTPClient, EmailTemplateBuilder
-│   └── Search/ApolloSearchProvider.swift    # ApolloSearchProvider (search + enrich)
-│
-├── Services/
-│   ├── AI/
-│   │   ├── EmailWriter.swift               # AI prompt engineering + email composition (supports custom instructions)
-│   │   └── ResumeAnalyzer.swift             # Resume → profile + strategy extraction
-│   ├── AppLogger.swift                      # Thread-safe logging service (console + file)
-│   ├── DocumentParser/
-│   │   ├── DOCXParserService.swift          # DOCX via ZIP extraction of word/document.xml
-│   │   └── PDFParserService.swift           # PDF via Apple PDFKit
-│   ├── Import/CSVImporter.swift             # CSV with auto-detect delimiter/columns/encoding
-│   └── Safety/
-│       ├── QualityScorer.swift              # 11-point scorer + duplicate detector
-│       └── CampaignIntelligence.swift       # Pre-send campaign analysis (0-100 score, risks, suggestions)
-│
-├── Managers/
-│   ├── ContactManager.swift                 # Search, CSV import, deduplication, relevance scoring
-│   ├── DraftManager.swift                   # AI generation, achievement rotation, validation, progressive UI
-│   └── SendEngine.swift                     # Campaign execution, adaptive delays, duplicate prevention
-│
-├── ViewModels/
-│   └── AppViewModel.swift                   # Thin UI coordinator (delegates to managers)
-│
-├── Views/
-│   ├── MainView.swift                       # NavigationSplitView + sidebar steps
-│   ├── Settings/SettingsView.swift          # 4-tab settings (Providers, Email, Campaign, AI Prompt)
-│   └── Steps/
-│       ├── Step1_ResumeView.swift           # Drop zone + AI analysis display
-│       ├── Step2_StrategyView.swift         # Filter builder + contact count slider
-│       ├── Step3_ContactsView.swift         # Multi-source table + CSV import + manual entry
-│       ├── Step4_DraftsView.swift           # Draft review + quality bar + resume badges + edit/regenerate
-│       └── Step5_SendView.swift             # Campaign intelligence card + progress ring + controls
-│
-├── Resources/
-│   └── AppIcon.png
-│
-Tests/
-└── JobBusTests/
-    └── JobBusTests.swift                    # Unit tests (QualityScorer, DuplicateDetector, CSVImporter,
-                                             # EmailWriter parser, AppSettings, EmailQualityScore)
+JobBus/
+├── Package.swift                    # SPM manifest (SwiftNIO, ZIPFoundation)
+├── Sources/
+│   ├── JobBusApp.swift              # @main entry, AppDelegate (activation, quit, icon)
+│   ├── Models/
+│   │   ├── AppSettings.swift        # All settings — Codable, @Published, JSON persistence
+│   │   ├── Contact.swift            # Contact model + RecipientType enum
+│   │   ├── EmailDraft.swift         # Draft model (subject, body, quality, approval)
+│   │   └── ResumeProfile.swift      # Parsed resume data
+│   ├── Protocols/
+│   │   └── Protocols.swift          # SearchProvider, EmailProvider, AIProvider protocols
+│   ├── Providers/
+│   │   ├── AI/AIProviders.swift     # Groq, OpenAI, Ollama HTTP clients + retry logic
+│   │   ├── Email/SMTPEmailProvider.swift  # Raw SMTP via SwiftNIO + MIME builder
+│   │   └── Search/                  # Apollo, Hunter, RocketReach search providers
+│   ├── Services/
+│   │   ├── AI/
+│   │   │   ├── EmailWriter.swift    # Prompt engineering + style matching from samples
+│   │   │   └── ResumeAnalyzer.swift # AI-powered resume parsing
+│   │   ├── AppLogger.swift          # File + console logging (INFO/WARN/DEBUG)
+│   │   ├── DocumentParser/          # PDF (PDFKit) and DOCX (ZIP) text extraction
+│   │   ├── Import/CSVImporter.swift # CSV contact import
+│   │   └── Safety/
+│   │       ├── QualityScorer.swift  # 11-point email quality + duplicate detection
+│   │       └── CampaignIntelligence.swift  # Pre-send analysis and stats
+│   ├── ViewModels/
+│   │   ├── AppViewModel.swift       # Central coordinator (settings, resume, navigation)
+│   │   ├── ContactManager.swift     # Contact CRUD, search, import orchestration
+│   │   ├── DraftManager.swift       # Draft generation, approval, batch operations
+│   │   └── SendEngine.swift         # Campaign execution (send loop, pause/resume/stop)
+│   └── Views/
+│       ├── MainView.swift           # Sidebar + content layout
+│       ├── Onboarding/OnboardingView.swift  # 4-step first-run wizard
+│       ├── Settings/
+│       │   ├── SettingsView.swift    # Tabbed settings (Providers, Email, Campaign, AI Prompt)
+│       │   └── SMTPSetupGuideView.swift  # Gmail/Outlook/Custom SMTP instructions
+│       └── Steps/
+│           ├── Step1_ResumeView.swift    # Resume upload + parsing
+│           ├── Step2_StrategyView.swift  # AI strategy review + filters
+│           ├── Step3_ContactsView.swift  # Contact table + search + import
+│           ├── Step4_DraftsView.swift    # Email drafts + quality scores + approval
+│           └── Step5_SendView.swift      # Campaign dashboard + launch
+├── Tests/                           # 58 unit tests
+├── scripts/package.sh               # Build → .app bundle → .zip packaging
+├── dist/                            # Generated .app and .zip (gitignored)
+├── README.md                        # User-facing docs
+├── INSTALL.md                       # Installation guide for other systems
+├── LICENSE                          # MIT
+└── RULES.md                         # THIS FILE — development context
 ```
 
 ---
 
-## 🔌 Provider System (Modular)
+## 🔧 Key Architecture Decisions
 
-All providers conform to protocols in `Protocols.swift`. To add a new provider:
+### State Management
+- **AppViewModel** (`@StateObject`) is the single source of truth, passed via `.environmentObject()`
+- **AppSettings** is `ObservableObject` with `@Published` properties, persisted to `~/Library/Application Support/JobBus/settings.json`
+- **Credentials** (API keys, SMTP passwords) stored in `KeychainService` (encrypted), NOT in settings JSON
 
-1. Create a new class conforming to the relevant protocol
-2. Add the provider type to the corresponding enum in `AppSettings.swift`
-3. Add the factory case in `AppViewModel.swift`
+### SMTP & Email
+- **SMTPEmailProvider** uses raw SwiftNIO sockets (no third-party SMTP library)
+- MIME messages built manually: `multipart/mixed` → `multipart/alternative` (plaintext + HTML) + optional PDF attachment
+- **Sandbox Mode** (default ON): routes all emails to `localhost:1025` (MailHog) for safe testing
+- Resume attachment is controlled per-contact via `Contact.shouldAttachResume` (true for recruiter/hiringManager types)
 
-### Search Providers
+### AI Integration
+- **EmailWriter** constructs prompts with: resume profile + contact context + custom instructions + writing style samples
+- **Writing Style Samples**: Users paste 1-3 of their own emails → `buildStyleBlock()` injects them into the AI prompt for tone matching
+- **Rate limiting**: Built-in retry with exponential backoff (3 attempts) for Groq/OpenAI
 
-| Provider | Protocol | Status |
-|---|---|---|
-| Apollo.io | `ContactSearchProvider` + `EmailEnrichmentProvider` | ✅ Implemented |
-| Hunter.io | `ContactSearchProvider` | 🔲 Placeholder |
-| RocketReach | `ContactSearchProvider` | 🔲 Placeholder |
+### Campaign Engine (SendEngine)
+- `campaignState` is a **class-level stored property** (NOT task-local) — critical for pause/resume to work
+- Campaign loop checks state on every iteration: `.running` → send, `.paused` → sleep loop, `.stopped` → break
+- Delay between emails is randomized: `baseDelay ± 20%`
+- Business hours enforcement with DST-safe date math
 
-### AI Providers
-
-| Provider | Protocol | Status |
-|---|---|---|
-| Ollama (Local) | `AIProvider` | ✅ Implemented |
-| Gemini Flash | `AIProvider` | ✅ Implemented |
-| Groq | `AIProvider` | ✅ Implemented |
-
-### Email Providers
-
-| Provider | Protocol | Status |
-|---|---|---|
-| Gmail SMTP | `EmailSenderProvider` | ✅ Implemented |
-| Outlook SMTP | `EmailSenderProvider` | ✅ Implemented |
-| Custom SMTP | `EmailSenderProvider` | ✅ Implemented |
+### Quality & Safety
+- **QualityScorer**: 11-point scoring (subject length, body length, personalization, spam words, etc.)
+- Contacts with empty emails are routed to duplicates list (EC7 fix)
+- **CampaignIntelligence**: Pre-send analysis showing stats, estimated completion time, and risk warnings
 
 ---
 
-## 🚦 App Pipeline (5 Steps)
+## 🔐 Data Locations
 
-```
-Step 1: Resume Upload → Parse PDF/DOCX → AI extracts profile
-            ↓
-Step 2: AI Strategy → Review/edit search filters → Set contact count
-            ↓
-Step 3: Contacts → Apollo search + enrich → CSV import → Manual add
-            ↓
-Step 4: AI Compose → Draft per contact → Quality score → Review/edit
-            ↓
-Step 5: Campaign → Type-to-confirm → Throttled send → Live progress
-```
-
-### Email Generation Pipeline Detail
-
-```
-┌─────────────────┐     ┌──────────────────┐     ┌────────────────┐     ┌─────────────────┐
-│  Resume PDF     │     │  Contact List    │     │  AI Provider   │     │  SMTP Send      │
-│                 │     │                  │     │                │     │                 │
-│  • Name         │────▶│  • First Name    │────▶│  • Prompt      │────▶│  • Quality Check│
-│  • Role         │     │  • Title         │     │  • Custom      │     │  • HTML Format  │
-│  • Skills       │     │  • Company       │     │    Instructions│     │  • Attach Resume│
-│  • Achievements │     │  • Type          │     │  • Generate    │     │  • MIME Build    │
-│  • Experience   │     │  • Location      │     │    Email       │     │  • Throttle     │
-└─────────────────┘     └──────────────────┘     └────────────────┘     └─────────────────┘
-```
-
-**Data Mapping:**
-
-| Source | Field | Maps To |
+| Data | Path | Format |
 |---|---|---|
-| Resume | Name | Sender name & signature |
-| Resume | Skills (top 6) | Email body highlights |
-| Resume | Achievements (top 3) | Quantifiable proof points |
-| Resume | PDF file | SMTP attachment |
-| Contact | First Name | Email greeting |
-| Contact | Company | Company reference in body |
-| Contact | Recipient Type | Tone & approach style |
-| Settings | Custom Instructions | Additional AI prompt rules |
+| Settings | `~/Library/Application Support/JobBus/settings.json` | JSON (Codable) |
+| Credentials | `~/Library/Application Support/JobBus/credentials.dat` | Encrypted blob |
+| Logs | `~/Library/Application Support/JobBus/logs/` | Timestamped text files |
+| Resume | `~/Library/Application Support/JobBus/resume_attachment.pdf` | PDF/DOCX copy |
 
 ---
 
-## 🛡️ Safety Guardrails
+## ⚙️ Settings Schema (AppSettings.swift)
 
-### Layer 1: Automated Validation (Pre-Send)
+```swift
+// Providers
+searchProvider: SearchProviderType    // .apollo, .hunter, .rocketReach
+aiProvider: AIProviderType            // .groq, .openAI, .ollama
+emailProvider: EmailProviderType      // .gmail, .outlook, .custom
 
-| Check | What It Does | Blocks If |
-|---|---|---|
-| Name Match | Verifies recipient's first name appears in body | Name missing |
-| Company Match | Verifies company name in body or subject | Company missing |
-| Length Check | Body must be 30–250 words | Outside range |
-| Subject Length | Subject must be 5–100 characters | Outside range |
-| Placeholder Scan | Detects `{{`, `[NAME]`, `XXX`, `INSERT`, etc. | Any found |
-| Spam Word Scan | 17 spam triggers: "act now", "guaranteed", "click here", etc. | Any found |
-| CTA Detection | Must have a soft call-to-action | No CTA detected |
-| Tone Check | Blocks 7 weak/generic phrases like "I hope this finds you well" | Any found |
+// Email
+smtpEmail: String                     // Sender email address
+smtpDisplayName: String               // "From" display name
+customSmtpHost: String                // Custom SMTP server
+customSmtpPort: Int                   // Custom SMTP port
 
-### Layer 2: Human-in-the-Loop Gates
+// Campaign
+delaySeconds: Double                  // Base delay between emails (default: 45)
+maxPerDay: Int                        // Daily send limit (default: 450)
+businessHoursOnly: Bool               // Restrict to business hours
+businessHoursStart/End: Int           // 9-18 default
+warmUpEnabled: Bool                   // Gradual ramp-up
 
-| Gate | When | What Happens |
-|---|---|---|
-| **Min 10 Reviews** | Before "Approve All" unlocks | Must manually review at least 10 drafts |
-| **Type-to-Confirm** | Before campaign launch | Must type exactly `SEND {count}` to proceed |
-| **First-3 Hold** | After first 3 emails sent | Auto-pauses — user must check Gmail Sent folder |
+// Sandbox
+sandboxMode: Bool                     // DEFAULT TRUE — routes to MailHog
+sandboxHost: String                   // localhost
+sandboxPort: Int                      // 1025
 
-### Layer 3: Runtime Protection
+// AI
+ollamaModel: String                   // llama3.1:8b
+ollamaBaseURL: String                 // http://localhost:11434
+customPromptInstructions: String      // Free-form AI prompt additions
+sampleEmails: [String]                // User's own email samples for style matching
 
-| Mechanism | Default | Description |
-|---|---|---|
-| Sandbox Mode | **ON** | Emails go to Mailhog (localhost:1025), not real recipients |
-| Rate Limiting | 45 sec delay | Configurable delay between each email |
-| Daily Max | 450/day | Hard cap on emails per day |
-| Business Hours | 9:00–18:00 | Sends only during configured hours |
-| Anomaly Detection | 20% threshold | Auto-pauses if failure rate exceeds 20% |
-| Warm-up Mode | Enabled | Gradual daily increase for new accounts |
+// Signature
+signatureName, signatureTitle, signatureLinkedin, signaturePhone: String
 
-### Layer 4: Quality Scoring
-
-Each draft gets a score from 0–8:
-
-| Grade | Score | Action |
-|---|---|---|
-| Excellent | 7–8 | Auto-ready for approval |
-| Good | 5–6 | Ready for approval |
-| Fair | 3–4 | Flagged for review |
-| Poor | 0–2 | **Blocked** — must edit or regenerate |
+// State
+hasCompletedOnboarding: Bool          // First-run wizard flag
+contactCount: Int                     // Number of contacts to search for
+```
 
 ---
 
-## ✉️ Email Rules
+## 🐛 Bugs Fixed (This Session)
 
-### Formatting
-
-- **HTML emails use table-based layout** — renders correctly in Gmail, Outlook, Apple Mail, and all mobile clients
-- **MIME multipart/alternative** — both plain text and HTML versions in every email
-- **Inline CSS only** — no `<style>` blocks, no external CSS
-- **Max width 600px** — standard email container width
-- **Signature auto-appended** — from Settings, never in AI-generated body
-- **Resume PDF auto-attached** — restored from cached URL on app init
-
-### Content Rules (Enforced via AI Prompt)
-
-1. Under 150 words (body only)
-2. Use recipient's FIRST NAME only (not "Dear", not full name)
-3. Reference their company by name at least once
-4. Include one quantifiable achievement
-5. End with a soft, low-commitment CTA
-6. **NO** buzzwords: "passionate", "motivated", "synergy", "leverage"
-7. **NO** filler: "I hope this finds you well", "I am writing to"
-8. **NO** exclamation marks
-9. **NO** salary/compensation mentions
-10. **NO** signature block in AI output (added separately)
-11. **Custom instructions** from Settings → AI Prompt tab are injected between recipient type instructions and absolute rules
-
-### Recipient-Specific Tone
-
-| Type | Tone | Max Words | CTA Style |
+| ID | Bug | Fix | File |
 |---|---|---|---|
-| Recruiter | Warm, professional | 120 | "Would you be open to a quick chat?" |
-| Hiring Manager | Value-focused, peer | 150 | "Would it make sense to connect?" |
-| Engineering Leader | Technical, confident | 150 | "I'd welcome a conversation about..." |
-| C-Suite | Executive, strategic | 80 | "Would a brief intro be worthwhile?" |
-| HR | Polite, structured | 120 | "Could you point me to the right person?" |
+| EC1-3 | Pause/Resume broken | `campaignState` → class property | `SendEngine.swift` |
+| EC5 | SMTP password visible | `SecureField` | `SettingsView.swift` |
+| EC6 | No SMTP pre-flight check | `smtpReady` computed property + warning | `Step5_SendView.swift` |
+| EC7 | Empty-email contacts leak | Route to duplicates | `QualityScorer.swift` |
+| EC9 | DST calendar crash | Safe unwrap + fallback | `SendEngine.swift` |
+| — | Dock "Quit" not working | Added `applicationShouldTerminate` delegate | `JobBusApp.swift` |
+| — | App icon white background | Converted JPEG → PNG with alpha | `AppIcon.png` |
 
 ---
 
-## 🔑 Credentials Storage
+## ✅ E2E Test Results (2026-04-26)
 
-Credentials are stored encrypted (XOR + base64) in `~/Library/Application Support/JobBus/credentials.dat`. Directory permissions set to 700 (owner-only). Encryption key derived from `NSUserName()` for per-machine uniqueness.
-
-| Secret | Keychain Key | Where Set |
+| Phase | Result | Details |
 |---|---|---|
-| Apollo API Key | `apollo_api_key` | Settings → Providers tab |
-| Hunter API Key | `hunter_api_key` | Settings → Providers tab |
-| RocketReach Key | `rocketreach_api_key` | Settings → Providers tab |
-| Gemini API Key | `gemini_api_key` | Settings → Providers tab |
-| Groq API Key | `groq_api_key` | Settings → Providers tab |
-| SMTP Password | `smtp_password` | Settings → Email tab |
-
-**API key status is shown in Settings:**
-- ✅ Configured keys show masked preview (e.g., `gsk_••••••mqcQd`) with Change/Delete buttons
-- ⚠️ Not configured keys show warning with input field
-
-**NEVER** store credentials in:
-- Source code
-- UserDefaults
-- Property lists
-- Environment variables committed to git
+| App Launch | ✅ | Groq AI, Apollo search, Sandbox ON |
+| Resume Parse | ✅ | PDF → 5651 chars, profile in <1s |
+| Draft Generation | ✅ | 7/7 drafts, all "excellent" quality |
+| Campaign Send | ✅ | 3/3 sent, 0 failed via MailHog |
+| MIME Structure | ✅ | 3 parts: plaintext + HTML + boundary |
+| Logs | ✅ | Clean — only expected Groq rate-limit warnings |
 
 ---
 
-## 📋 Settings Tabs
-
-| Tab | Contents |
-|---|---|
-| **Providers** | Contact Search Provider (Apollo/Hunter/RocketReach) + API key status, AI Provider (Ollama/Gemini/Groq) + API key status |
-| **Email** | SMTP config (Gmail/Outlook/Custom), Email Signature fields |
-| **Campaign** | Sending rules (delay, daily limit, business hours), Safety (sandbox mode, Mailhog config) |
-| **AI Prompt** | Pipeline explainer, Data mapping table, Custom prompt instructions editor, Built-in prompt template preview |
-
----
-
-## 📊 Logging System
-
-**Location:** `~/Library/Application Support/JobBus/logs/`
-
-| Feature | Detail |
-|---|---|
-| **Log levels** | DEBUG, INFO, WARN, ERROR |
-| **Output** | Console + timestamped log file per session |
-| **Thread safety** | Dedicated `DispatchQueue` |
-| **Auto-rotation** | Keeps last 20 session logs |
-| **Coverage** | App init, resume parsing, contact search, draft generation, AI API calls, SMTP delivery, campaign lifecycle |
-| **Context** | Each entry includes file, function, and line number |
-
----
-
-## 🧪 Testing
-
-### Unit Tests
-
-Run unit tests with:
+## 📦 Packaging & Distribution
 
 ```bash
-swift test
+# Build + package in one command:
+./scripts/package.sh
+
+# Output:
+# dist/JobBus.app           ← Double-click to run
+# dist/JobBus-v1.0.0-macOS.zip  ← 3.6 MB, share via AirDrop/WhatsApp
+
+# Recipient installation:
+unzip JobBus-v1.0.0-macOS.zip
+xattr -cr JobBus.app          # Remove quarantine (required for unsigned apps)
+mv JobBus.app /Applications/
+open /Applications/JobBus.app
 ```
-
-Tests cover:
-
-| Module | Tests |
-|---|---|
-| **QualityScorer** | Perfect score, spam detection, placeholder detection, weak phrase detection, name/company matching |
-| **DuplicateDetector** | Deduplication, case-insensitive matching, empty email handling |
-| **CSVImporter** | Column auto-detection, delimiter detection, name format parsing, email validation |
-| **EmailWriter** | Response parsing (SUBJECT/BODY markers, edge cases, markdown cleanup) |
-| **AppSettings** | Persistence (save/load/defaults), custom prompt instructions encoding |
-| **EmailQualityScore** | Score calculation, grade boundaries |
-
-### Sandbox Mode (Integration Testing)
-
-1. Install Mailhog: `brew install mailhog`
-2. Start: `mailhog`
-3. Dashboard: `http://localhost:8025`
-4. All emails route to Mailhog instead of real recipients
-5. Verify formatting, subject lines, personalization, resume attachments
-
-### Going Live Checklist
-
-- [ ] Reviewed at least 10 drafts manually
-- [ ] Tested full pipeline in sandbox mode
-- [ ] Checked 3+ emails in Mailhog for formatting + resume attachment
-- [ ] Turned OFF sandbox mode in Settings
-- [ ] Configured real SMTP email + app password
-- [ ] Set appropriate daily limit and delay
-- [ ] Confirmed business hours settings
 
 ---
 
-## 🖥️ Build & Run
+## 🚀 What's Next (Potential Improvements)
+
+### High Priority
+- [ ] **Code signing & notarization** — eliminate the `xattr -cr` requirement
+- [ ] **Unit test expansion** — 58 tests exist but need coverage for new features (onboarding, SMTP validation)
+- [ ] **Pause/Resume E2E test** — needs a campaign with 5+ contacts to verify
+
+### Medium Priority
+- [ ] **Email tracking** — open/click tracking via pixel or link wrapping
+- [ ] **Follow-up sequences** — auto-send follow-ups after N days if no reply
+- [ ] **Contact enrichment** — LinkedIn profile scraping for better personalization
+- [ ] **Template library** — pre-built email templates for common job types
+- [ ] **Campaign history** — persist sent campaigns for analytics
+
+### Low Priority
+- [ ] **Dark mode polish** — verify all views look good in dark mode
+- [ ] **Keyboard shortcuts** — ⌘N (new campaign), ⌘S (save), ⌘Enter (send)
+- [ ] **Auto-update** — Sparkle framework for in-app updates
+- [ ] **Export** — export sent emails / contacts to CSV
+- [ ] **Multi-resume** — support different resumes for different job types
+
+---
+
+## 🧰 Development Commands
 
 ```bash
 # Build
-cd /Users/neelmani-mishra/Documents/TryingSomethingInteresting/JobBus
-swift build
+swift build                    # Debug build
+swift build -c release         # Release build
 
 # Run
-swift run
+.build/release/JobBus          # Run from terminal
 
 # Test
-swift test
+swift test                     # Run 58 unit tests
 
-# Open in Xcode (optional)
-open Package.swift
-```
+# Package
+./scripts/package.sh           # Build + bundle + zip
 
-### Distribution (DMG)
+# Test emails (separate terminal)
+brew install mailhog && mailhog  # Start MailHog
+# Open http://localhost:8025
 
-```bash
-# Build release
-swift build -c release
-
-# The binary is at:
-# .build/release/JobBus
-
-# Create DMG (future — requires Apple Developer ID for notarization)
+# Dependencies
+# Package.swift → SwiftNIO (SMTP), ZIPFoundation (DOCX parsing)
 ```
 
 ---
 
-## 📋 API Reference
+## ⚠️ Known Gotchas
 
-### Apollo.io
-
-- **Search endpoint**: `POST /api/v1/mixed_people/search` (free, no credits)
-- **Enrichment endpoint**: `POST /api/v1/people/match` (consumes credits)
-- **Auth header**: `x-api-key: {key}`
-- **Rate limit**: Handle 429 with `Retry-After` header
-- **Docs**: https://docs.apollo.io/
-
-### Ollama (Local LLM)
-
-- **Generate**: `POST http://localhost:11434/api/generate`
-- **List models**: `GET http://localhost:11434/api/tags`
-- **Default model**: `llama3.1:8b`
-- **Start**: `ollama serve`
-
-### Gemini Flash
-
-- **Endpoint**: `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key}`
-- **Free tier**: Yes
-- **Docs**: https://ai.google.dev/
-
-### Groq
-
-- **Endpoint**: `POST https://api.groq.com/openai/v1/chat/completions`
-- **Model**: `llama-3.3-70b-versatile`
-- **Free tier**: Yes, with rate limits (30 req/min, 14,400 tokens/min)
-- **Rate limit**: Exponential backoff with 3 retries
-- **Docs**: https://console.groq.com/docs
-
----
-
-## 🚨 Edge Cases to Remember
-
-1. **Scanned PDFs** — PDFKit extracts no text → show clear error, suggest DOCX
-2. **Password-protected PDFs** — Detected and rejected with message
-3. **CSV encoding** — Try UTF-8 first, fallback to ISO-8859-1
-4. **CSV delimiter** — Auto-detect comma vs tab vs semicolon
-5. **Name formats** — Handle "Last, First" and "First Last" in CSV
-6. **Duplicate emails** — Deduped by lowercase email across all sources
-7. **Empty emails from Apollo** — Contacts with no email marked as `noEmail`, skipped for drafts
-8. **AI returning markdown** — JSON parser strips ```json fences before parsing
-9. **SMTP auth failure** — Clear error message, don't retry with wrong password
-10. **Rate limiting** — Exponential backoff on 429 responses
-11. **Credits exhausted** — Stop enrichment, return what we have so far
-12. **AI hallucination** — Quality scorer catches name/company mismatches
-13. **Gmail sending limits** — 500/day for regular accounts, configurable in Settings
-14. **Campaign counter stability** — `campaignTotal` captured once at launch to prevent negative pending counts
-15. **Resume attachment** — `restoreCachedResumeURL()` called on init to preserve attachment between sessions
-16. **AI response parsing** — Resilient 3-strategy parser handles missing SUBJECT/BODY markers, markdown, and edge cases
-
----
-
-## 📝 Conventions
-
-- **Naming**: Swift standard — PascalCase for types, camelCase for properties
-- **File naming**: Match the primary type name (e.g., `Contact.swift` for `struct Contact`)
-- **Comments**: MARK comments for section headers (`// MARK: - Section`)
-- **Error handling**: All providers throw `ProviderError` enum cases
-- **Async**: All network/AI calls are `async throws`
-- **UI updates**: All `@Published` properties on `@MainActor`
-- **Color hex**: Use `Color(hex: "#8b5cf6")` extension throughout
-- **Logging**: Use `AppLogger.shared` with `.info()`, `.debug()`, `.warn()`, `.error()` methods
-
----
-
-## 🔄 Recent Changes
-
-| Date | Commit | Changes |
-|---|---|---|
-| 2025-04-25 | `8575feb` | Settings UI/UX: API key status indicators, AI Prompt tab, custom instructions |
-| 2025-04-25 | `36e5f72` | Campaign counter fix (stable campaignTotal), logging system, resume attachment fix |
-| 2025-04-24 | `7fb157f` | Initial Job Bus v1.0 release |
-
----
-
-*Last updated: 2026-04-25*
-*Commit: `8575feb` — Settings UX + Custom AI Prompt + Unit Tests*
+1. **SPM + SwiftUI**: App must call `NSApplication.shared.setActivationPolicy(.regular)` in AppDelegate or text fields won't receive keyboard focus
+2. **Icon**: SPM apps can't use Assets.xcassets — icon is loaded from `Bundle.module` at runtime via `AppDelegate`
+3. **Keychain**: API keys and SMTP passwords use `KeychainService` — never store in `settings.json`
+4. **Groq rate limits**: Free tier hits 429 frequently — the retry logic handles it (3 attempts with backoff)
+5. **Resume attachment**: Only attached for contacts with `recipientType` of `.recruiter` or `.hiringManager`
+6. **Sandbox default**: `sandboxMode` defaults to `true` — users must explicitly turn it off for production sends
