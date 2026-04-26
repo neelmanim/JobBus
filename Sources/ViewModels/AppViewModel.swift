@@ -375,6 +375,7 @@ class AppViewModel: ObservableObject {
             ai: aiProvider,
             emailWriter: emailWriter,
             customInstructions: settings.customPromptInstructions,
+            sampleEmails: settings.sampleEmails,
             aiProviderType: settings.aiProvider,
             onProgress: { [weak self] msg in
                 self?.loadingMessage = msg

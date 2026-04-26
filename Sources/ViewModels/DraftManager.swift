@@ -49,6 +49,7 @@ class DraftManager {
         ai: AIProvider,
         emailWriter: EmailWriter,
         customInstructions: String,
+        sampleEmails: [String] = [],
         aiProviderType: AIProviderType,
         onProgress: @escaping (String) -> Void,
         onDraftUpdate: @escaping ([EmailDraft]) -> Void,
@@ -86,7 +87,8 @@ class DraftManager {
                         resume: resume,
                         ai: ai,
                         customInstructions: customInstructions,
-                        selectedAchievement: achievement
+                        selectedAchievement: achievement,
+                        sampleEmails: sampleEmails
                     )
                     
                     // Set resume attachment based on contact type

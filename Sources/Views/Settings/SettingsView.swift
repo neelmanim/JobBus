@@ -545,6 +545,110 @@ struct SettingsView: View {
                 }
             }
             
+            // Writing Style Samples
+            SettingsCard(title: "Writing Style Samples", icon: "text.quote", color: "#ec4899") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Paste 1-3 emails you've written before. The AI will analyze your writing style — sentence length, tone, formality, greeting patterns — and generate emails that sound like you.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    
+                    let validSamples = vm.settings.sampleEmails.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                    
+                    if !validSamples.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                                .font(.caption)
+                            Text("\(validSamples.count) sample\(validSamples.count == 1 ? "" : "s") loaded — AI will match your writing style")
+                                .font(.caption.weight(.medium))
+                                .foregroundColor(.green)
+                        }
+                    }
+                    
+                    ForEach(vm.settings.sampleEmails.indices, id: \.self) { index in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Sample \(index + 1)")
+                                    .font(.caption.bold())
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                let charCount = vm.settings.sampleEmails[index].count
+                                Text("\(charCount) chars")
+                                    .font(.caption2)
+                                    .foregroundColor(charCount > 50 ? .secondary : .orange)
+                                Button {
+                                    vm.settings.sampleEmails.remove(at: index)
+                                    vm.settings.save()
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.secondary)
+                                        .font(.caption)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            TextEditor(text: Binding(
+                                get: { vm.settings.sampleEmails[index] },
+                                set: { vm.settings.sampleEmails[index] = $0 }
+                            ))
+                            .font(.callout)
+                            .frame(minHeight: 80, maxHeight: 120)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.primary.opacity(0.15), lineWidth: 1)
+                            )
+                        }
+                    }
+                    
+                    HStack {
+                        if vm.settings.sampleEmails.count < 3 {
+                            Button {
+                                vm.settings.sampleEmails.append("")
+                            } label: {
+                                Label("Add Sample Email", systemImage: "plus.circle")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        
+                        Spacer()
+                        
+                        if !vm.settings.sampleEmails.isEmpty {
+                            Button {
+                                vm.settings.sampleEmails.removeAll()
+                                vm.settings.save()
+                            } label: {
+                                Label("Clear All", systemImage: "trash")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.red)
+                        }
+                    }
+                    
+                    if vm.settings.sampleEmails.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("What makes a good sample?")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.secondary)
+                            
+                            Group {
+                                Text("• A cold outreach email you sent that got a response")
+                                Text("• A networking email to someone you didn't know")
+                                Text("• A professional intro email you're proud of")
+                                Text("• Even a LinkedIn message works — paste the text")
+                            }
+                            .font(.caption)
+                            .foregroundColor(.secondary.opacity(0.8))
+                        }
+                        .padding(10)
+                        .background(Color.primary.opacity(0.03))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+            
             // Built-in Prompt Preview (read-only)
             SettingsCard(title: "Built-in Prompt Template", icon: "doc.plaintext.fill", color: "#6366f1") {
                 VStack(alignment: .leading, spacing: 10) {

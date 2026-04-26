@@ -98,7 +98,9 @@ struct Step4_DraftsView: View {
                                               let profile = vm.resumeProfile else { return }
                                         vm.drafts[index].status = .generating
                                         if let newDraft = try? await vm.emailWriter.compose(
-                                            contact: contact, resume: profile, ai: vm.aiProvider
+                                            contact: contact, resume: profile, ai: vm.aiProvider,
+                                            customInstructions: vm.settings.customPromptInstructions,
+                                            sampleEmails: vm.settings.sampleEmails
                                         ) {
                                             vm.drafts[index] = newDraft
                                             vm.drafts[index].regenerateCount += 1

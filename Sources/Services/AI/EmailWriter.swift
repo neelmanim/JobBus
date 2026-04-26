@@ -7,10 +7,12 @@ class EmailWriter {
     
     func compose(contact: Contact, resume: ResumeProfile,
                  ai: AIProvider, customInstructions: String = "",
-                 selectedAchievement: String = "") async throws -> EmailDraft {
+                 selectedAchievement: String = "",
+                 sampleEmails: [String] = []) async throws -> EmailDraft {
         let prompt = buildPrompt(contact: contact, resume: resume,
                                  customInstructions: customInstructions,
-                                 selectedAchievement: selectedAchievement)
+                                 selectedAchievement: selectedAchievement,
+                                 sampleEmails: sampleEmails)
         let response = try await ai.generate(prompt: prompt)
         
         let (subject, body) = parseEmailResponse(response)
@@ -48,7 +50,8 @@ class EmailWriter {
     
     private func buildPrompt(contact: Contact, resume: ResumeProfile,
                              customInstructions: String = "",
-                             selectedAchievement: String = "") -> String {
+                             selectedAchievement: String = "",
+                             sampleEmails: [String] = []) -> String {
         let companyInfo: String
         if contact.company.isEmpty {
             companyInfo = "(Company unknown — do NOT use placeholders like [Company Name]. Instead, reference their role or industry.)"
@@ -116,7 +119,7 @@ class EmailWriter {
         
         TONE INSTRUCTIONS FOR \(contact.recipientType.label.uppercased()):
         \(contact.recipientType.writingInstructions)
-        \(customBlock)
+        \(buildStyleBlock(sampleEmails: sampleEmails))\(customBlock)
         ABSOLUTE RULES:
         1. Total body MUST be under 120 words (excluding signature)
         2. Use the recipient's FIRST NAME only (not full name, not "Dear")
@@ -141,6 +144,34 @@ class EmailWriter {
         BODY:
         [Your email body here]
         """
+    }
+    
+    /// Builds the writing style reference block from user-provided email samples.
+    private func buildStyleBlock(sampleEmails: [String]) -> String {
+        let validSamples = sampleEmails
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        
+        guard !validSamples.isEmpty else { return "" }
+        
+        var block = """
+        
+        WRITING STYLE REFERENCE:
+        The user has provided sample emails they've written. You MUST match their writing style:
+        - Match their sentence length patterns (short/punchy vs. flowing)
+        - Match their greeting style (casual "Hey" vs. semi-formal "Hi" vs. formal salutation)
+        - Match their level of formality and directness
+        - Match their paragraph structure (short paragraphs vs. dense blocks)
+        - Match how they transition between topics
+        - Do NOT copy their content — only mimic the style, rhythm, and tone
+        
+        """
+        
+        for (i, sample) in validSamples.enumerated() {
+            block += "--- SAMPLE EMAIL \(i + 1) ---\n\(sample)\n--- END SAMPLE \(i + 1) ---\n\n"
+        }
+        
+        return block
     }
     
     func parseEmailResponse(_ response: String) -> (subject: String, body: String) {
