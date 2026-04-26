@@ -51,18 +51,27 @@ class AppViewModel: ObservableObject {
     let contactManager = ContactManager()
     let draftManager = DraftManager()
     let sendEngine = SendEngine()
+    let usageTracker = UsageTracker()
     
     // Task handles for cancellation
     private var searchTask: Task<Void, Never>?
     
     // Forward nested ObservableObject changes so SwiftUI sees them
     private var settingsSink: AnyCancellable?
+    private var tokenSink: AnyCancellable?
+    private var creditSink: AnyCancellable?
+    private var usageSink: AnyCancellable?
     
     init() {
         self.settings = AppSettings.load()
         
         // Forward settings changes to our objectWillChange so SwiftUI picks them up
         settingsSink = settings.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        
+        // Forward usage tracker changes so the sidebar stats update
+        usageSink = usageTracker.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         
@@ -73,6 +82,22 @@ class AppViewModel: ObservableObject {
         restoreCachedResumeURL()
         
         requestNotificationPermission()
+        
+        // Subscribe to AI token usage notifications
+        tokenSink = NotificationCenter.default.publisher(for: .aiTokensUsed)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] notification in
+                if let tokens = notification.userInfo?["tokens"] as? Int {
+                    self?.usageTracker.addGroqTokens(tokens)
+                }
+            }
+        
+        // Subscribe to Apollo credit usage notifications
+        creditSink = NotificationCenter.default.publisher(for: .apolloCreditUsed)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.usageTracker.addApolloCredits(1)
+            }
         
         log.section("APP LAUNCH")
         log.info("AI Provider: \(settings.aiProvider.rawValue)")
@@ -257,6 +282,9 @@ class AppViewModel: ObservableObject {
         loadingMessage = "Searching for contacts via \(settings.searchProvider.rawValue)..."
         canRetry = false
         
+        // Track search
+        usageTracker.addApolloSearch()
+        
         searchTask = Task {
             do {
                 let result = try await contactManager.search(
@@ -414,6 +442,12 @@ class AppViewModel: ObservableObject {
     
     func cancelGeneration() {
         draftManager.cancelGeneration()
+    }
+    
+    /// Clear all existing drafts and regenerate from scratch for all selected contacts
+    func generateDraftsFromScratch() async {
+        drafts.removeAll()
+        await generateDrafts()
     }
     
     // MARK: - Campaign Sending (delegates to SendEngine)

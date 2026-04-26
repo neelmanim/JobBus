@@ -216,12 +216,12 @@ struct Step2_StrategyView: View {
                     .foregroundColor(.secondary)
                 
                 if vm.isSearching {
-                    VStack(spacing: 8) {
-                        ProgressView()
-                        Text(vm.loadingMessage)
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                    }
+                    LoadingOverlay(
+                        message: vm.loadingMessage,
+                        phase: .searching
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    .animation(.spring(response: 0.3), value: vm.isSearching)
                 }
                 
                 Spacer(minLength: 32)

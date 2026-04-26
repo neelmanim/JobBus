@@ -133,22 +133,30 @@ struct QualityScorer {
 // MARK: - Duplicate Detector
 class DuplicateDetector {
     static func removeDuplicates(from contacts: [Contact]) -> (unique: [Contact], duplicates: [Contact]) {
-        var seen = Set<String>()
+        var seenEmails = Set<String>()
+        var seenNameCompany = Set<String>()
         var unique: [Contact] = []
         var duplicates: [Contact] = []
         
         for contact in contacts {
-            let key = contact.email.lowercased()
-            if key.isEmpty {
-                // EC7: Don't pass contacts with no email into the pipeline — they'll fail at SMTP
-                duplicates.append(contact)
-                continue
-            }
-            if seen.contains(key) {
-                duplicates.append(contact)
+            if !contact.email.isEmpty {
+                // Deduplicate by email
+                let key = contact.email.lowercased()
+                if seenEmails.contains(key) {
+                    duplicates.append(contact)
+                } else {
+                    seenEmails.insert(key)
+                    unique.append(contact)
+                }
             } else {
-                seen.insert(key)
-                unique.append(contact)
+                // No email — deduplicate by name + company
+                let nameKey = "\(contact.firstName.lowercased())_\(contact.lastName.lowercased())_\(contact.company.lowercased())"
+                if seenNameCompany.contains(nameKey) {
+                    duplicates.append(contact)
+                } else {
+                    seenNameCompany.insert(nameKey)
+                    unique.append(contact)
+                }
             }
         }
         return (unique, duplicates)

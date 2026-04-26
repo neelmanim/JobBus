@@ -1,5 +1,10 @@
 import Foundation
 
+// MARK: - Token Usage Notification
+extension Notification.Name {
+    static let aiTokensUsed = Notification.Name("aiTokensUsed")
+}
+
 // MARK: - Ollama AI Provider (Local LLM)
 class OllamaProvider: AIProvider {
     let name = "Ollama (Local)"
@@ -191,6 +196,17 @@ class GroqProvider: AIProvider {
               let message = choices.first?["message"] as? [String: Any],
               let text = message["content"] as? String
         else { throw ProviderError.parseError("Invalid Groq response") }
+        
+        // Extract and report token usage for tracking
+        if let usage = json["usage"] as? [String: Any],
+           let totalTokens = usage["total_tokens"] as? Int {
+            NotificationCenter.default.post(
+                name: .aiTokensUsed,
+                object: nil,
+                userInfo: ["tokens": totalTokens, "provider": "groq"]
+            )
+        }
+        
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     

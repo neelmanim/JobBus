@@ -99,16 +99,12 @@ struct Step1_ResumeView: View {
             
             // Loading overlay
             if vm.isLoading {
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .scaleEffect(0.9)
-                    Text(vm.loadingMessage)
-                        .font(.callout.weight(.medium))
-                        .foregroundColor(.secondary)
-                }
-                .padding(20)
-                .background(.ultraThinMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                LoadingOverlay(
+                    message: vm.loadingMessage,
+                    phase: .parsing
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                .animation(.spring(response: 0.3), value: vm.isLoading)
             }
             
             Spacer()

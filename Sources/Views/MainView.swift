@@ -5,6 +5,7 @@ struct MainView: View {
     @EnvironmentObject var vm: AppViewModel
     @State private var showSettings = false
     @State private var sidebarHover: AppStep? = nil
+    @State private var showResetConfirm = false
     
     var body: some View {
         NavigationSplitView {
@@ -91,6 +92,71 @@ struct MainView: View {
                     )
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
+                }
+                
+                // Usage Stats Bar
+                if vm.usageTracker.stats.apolloCreditsUsed > 0 || vm.usageTracker.stats.groqTokensUsed > 0 {
+                    VStack(spacing: 6) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chart.bar.fill")
+                                .font(.caption2)
+                                .foregroundColor(.secondary.opacity(0.6))
+                            Text("USAGE")
+                                .font(.system(size: 9, weight: .bold))
+                                .tracking(1)
+                                .foregroundColor(.secondary.opacity(0.6))
+                            Spacer()
+                            Button {
+                                showResetConfirm = true
+                            } label: {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.secondary.opacity(0.4))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Reset usage counters")
+                        }
+                        
+                        HStack(spacing: 12) {
+                            if vm.usageTracker.stats.apolloCreditsUsed > 0 {
+                                HStack(spacing: 4) {
+                                    Circle()
+                                        .fill(Color(hex: "#8b5cf6"))
+                                        .frame(width: 6, height: 6)
+                                    Text("\(vm.usageTracker.stats.apolloCreditsUsed)")
+                                        .font(.caption.monospacedDigit().weight(.semibold))
+                                    Text("credits")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            
+                            if vm.usageTracker.stats.groqTokensUsed > 0 {
+                                HStack(spacing: 4) {
+                                    Circle()
+                                        .fill(Color(hex: "#3b82f6"))
+                                        .frame(width: 6, height: 6)
+                                    Text(vm.usageTracker.stats.groqTokensFormatted)
+                                        .font(.caption.monospacedDigit().weight(.semibold))
+                                    Text("tokens")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            
+                            Spacer()
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.primary.opacity(0.03))
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .animation(.easeInOut(duration: 0.3), value: vm.usageTracker.stats.apolloCreditsUsed)
                 }
                 
                 // Settings Button
@@ -203,6 +269,14 @@ struct MainView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
                 .environmentObject(vm)
+        }
+        .alert("Reset Usage Stats?", isPresented: $showResetConfirm) {
+            Button("Reset", role: .destructive) {
+                vm.usageTracker.reset()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will reset all cumulative Apollo credit and Groq token counters to zero.")
         }
         // Keyboard shortcuts for step navigation
         .background(

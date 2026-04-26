@@ -8,6 +8,7 @@ struct Step3_ContactsView: View {
     @State private var showManualEntry = false
     @State private var searchText = ""
     @State private var selectedSource: ContactSource?
+    @State private var showResumeRestartAlert = false
     
     var filteredContacts: [Contact] {
         var result = vm.contacts
@@ -77,14 +78,10 @@ struct Step3_ContactsView: View {
                 
                 // Loading Message
                 if vm.isSearching {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(vm.loadingMessage)
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.vertical, 4)
+                    InlineLoadingIndicator(
+                        message: vm.loadingMessage,
+                        phase: vm.loadingMessage.contains("Enriching") ? .enriching : .searching
+                    )
                 }
                 
                 // Summary
@@ -232,13 +229,24 @@ struct Step3_ContactsView: View {
                 Spacer()
                 
                 Button {
-                    Task { await vm.generateDrafts() }
+                    // Check if there are partial drafts (some exist, some need generating)
+                    let existingIds = Set(vm.drafts.filter { $0.status != .failed }.map { $0.contactId })
+                    let selectedIds = Set(vm.contacts.filter { $0.isSelected && !$0.email.isEmpty }.map { $0.id })
+                    let newCount = selectedIds.subtracting(existingIds).count
+                    let hasPartialDrafts = !existingIds.isEmpty && newCount > 0
+                    
+                    if hasPartialDrafts {
+                        showResumeRestartAlert = true
+                    } else {
+                        Task { await vm.generateDrafts() }
+                    }
                 } label: {
                     if vm.isGenerating {
                         HStack(spacing: 6) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Generating...")
+                            InlineLoadingIndicator(
+                                message: "Generating...",
+                                phase: .composing
+                            )
                         }
                     } else {
                         // Smart label: show what the button will actually do
@@ -271,6 +279,21 @@ struct Step3_ContactsView: View {
         }
         .sheet(isPresented: $showManualEntry) {
             ManualEntrySheet()
+        }
+        .alert("Resume or Restart?", isPresented: $showResumeRestartAlert) {
+            Button("Resume") {
+                Task { await vm.generateDrafts() }
+            }
+            Button("Restart All", role: .destructive) {
+                Task { await vm.generateDraftsFromScratch() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            let existingIds = Set(vm.drafts.filter { $0.status != .failed }.map { $0.contactId })
+            let selectedIds = Set(vm.contacts.filter { $0.isSelected && !$0.email.isEmpty }.map { $0.id })
+            let doneCount = existingIds.intersection(selectedIds).count
+            let remainingCount = selectedIds.subtracting(existingIds).count
+            Text("You have \(doneCount) drafts already generated.\n\nResume: Generate \(remainingCount) remaining drafts.\nRestart: Discard all drafts and regenerate from scratch.")
         }
     }
 }

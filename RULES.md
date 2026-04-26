@@ -1,6 +1,6 @@
 # JobBus — Development Context & Rules
 
-> **Last Updated**: 2026-04-26 (v1.0.0 Launch Release)
+> **Last Updated**: 2026-04-26 (UI Modernization — Loading Overlay + Usage Stats + Resume/Restart)
 > **Status**: Production-ready, E2E tested, packaged for distribution
 
 ---
@@ -59,6 +59,7 @@ JobBus/
 │   │   ├── AppLogger.swift          # File + console logging (INFO/WARN/DEBUG)
 │   │   ├── DocumentParser/          # PDF (PDFKit) and DOCX (ZIP) text extraction
 │   │   ├── Import/CSVImporter.swift # CSV contact import
+│   │   ├── UsageTracker.swift       # Cumulative Apollo credits + Groq tokens, persisted
 │   │   └── Safety/
 │   │       ├── QualityScorer.swift  # 11-point email quality + duplicate detection
 │   │       └── CampaignIntelligence.swift  # Pre-send analysis and stats
@@ -68,7 +69,9 @@ JobBus/
 │   │   ├── DraftManager.swift       # Draft generation, approval, batch operations
 │   │   └── SendEngine.swift         # Campaign execution (send loop, pause/resume/stop)
 │   └── Views/
-│       ├── MainView.swift           # Sidebar + content layout
+│       ├── Components/
+│       │   └── LoadingOverlay.swift  # Premium animated loading (pulse rings, phases, progress)
+│       ├── MainView.swift           # Sidebar + content layout + usage stats footer
 │       ├── Onboarding/OnboardingView.swift  # 4-step first-run wizard
 │       ├── Settings/
 │       │   ├── SettingsView.swift    # Tabbed settings (Providers, Email, Campaign, AI Prompt)
@@ -76,7 +79,7 @@ JobBus/
 │       └── Steps/
 │           ├── Step1_ResumeView.swift    # Resume upload + parsing
 │           ├── Step2_StrategyView.swift  # AI strategy review + filters
-│           ├── Step3_ContactsView.swift  # Contact table + search + import
+│           ├── Step3_ContactsView.swift  # Contact table + search + resume/restart dialog
 │           ├── Step4_DraftsView.swift    # Email drafts + quality scores + approval
 │           └── Step5_SendView.swift      # Campaign dashboard + launch
 ├── Tests/                           # 58 unit tests
@@ -119,6 +122,24 @@ JobBus/
 - Contacts with empty emails are routed to duplicates list (EC7 fix)
 - **CampaignIntelligence**: Pre-send analysis showing stats, estimated completion time, and risk warnings
 
+### Usage Tracking (UsageTracker)
+- **Cumulative stats**: Apollo credits used, search count, Groq tokens consumed, AI call count
+- **Persisted** to `~/Library/Application Support/JobBus/usage_stats.json` — survives app restarts
+- **Notification-based**: `AIProviders.swift` posts `.aiTokensUsed` with `usage.total_tokens`; `ApolloSearchProvider.swift` posts `.apolloCreditUsed` on successful enrichment
+- **AppViewModel** subscribes via Combine and forwards changes to SwiftUI
+- **Sidebar footer** in `MainView` shows live stats with reset button + confirmation dialog
+
+### Loading Overlay (LoadingOverlay.swift)
+- **Phase-aware**: Different icon + gradient per operation phase (parsing, searching, enriching, composing, sending)
+- **Animated pulse rings**: 3 concentric circles with staggered animation + SF Symbols `.symbolEffect(.pulse)`
+- **Progress bar**: Spring-animated fill bar for batch operations (e.g., enrichment 3/8)
+- **Glassmorphism**: `.ultraThinMaterial` backdrop with gradient border stroke
+- Replaces all `ProgressView()` spinners across Step1, Step2, Step3
+
+### Draft Resume/Restart
+- When user cancels draft generation mid-way and returns to compose, a dialog offers **Resume** (generate remaining) vs **Restart All** (clear + regenerate)
+- `generateDraftsFromScratch()` clears all existing drafts before re-invoking `generateDrafts()`
+
 ---
 
 ## 🔐 Data Locations
@@ -129,6 +150,7 @@ JobBus/
 | Credentials | `~/Library/Application Support/JobBus/credentials.dat` | Encrypted blob |
 | Logs | `~/Library/Application Support/JobBus/logs/` | Timestamped text files |
 | Resume | `~/Library/Application Support/JobBus/resume_attachment.pdf` | PDF/DOCX copy |
+| Usage Stats | `~/Library/Application Support/JobBus/usage_stats.json` | JSON (cumulative) |
 
 ---
 
@@ -185,6 +207,12 @@ contactCount: Int                     // Number of contacts to search for
 | EC9 | DST calendar crash | Safe unwrap + fallback | `SendEngine.swift` |
 | — | Dock "Quit" not working | Added `applicationShouldTerminate` delegate | `JobBusApp.swift` |
 | — | App icon white background | Converted JPEG → PNG with alpha | `AppIcon.png` |
+| — | Apollo emails missing | 2-step discovery→enrichment via `/people/match` | `ApolloSearchProvider.swift` |
+| — | Apollo 403 rate blocks | Increased inter-request delay to 1.5s | `ApolloSearchProvider.swift` |
+| — | Valid contacts dropped | DuplicateDetector retains contacts pre-enrichment | `QualityScorer.swift` |
+| — | Old loading spinners | Premium LoadingOverlay with pulse rings + phases | `LoadingOverlay.swift` |
+| — | No usage visibility | Cumulative Apollo/Groq tracker in sidebar | `UsageTracker.swift`, `MainView.swift` |
+| — | Cancel→resume auto-starts | Resume/Restart dialog on partial drafts | `Step3_ContactsView.swift` |
 
 ---
 
@@ -194,9 +222,13 @@ contactCount: Int                     // Number of contacts to search for
 |---|---|---|
 | App Launch | ✅ | Groq AI, Apollo search, Sandbox ON |
 | Resume Parse | ✅ | PDF → 5651 chars, profile in <1s |
-| Draft Generation | ✅ | 7/7 drafts, all "excellent" quality |
-| Campaign Send | ✅ | 3/3 sent, 0 failed via MailHog |
+| Contact Discovery | ✅ | 8/8 contacts discovered + enriched with emails |
+| Draft Generation | ✅ | 8/8 drafts, all "excellent" quality |
+| Campaign Send | ✅ | 2/8 sent, pause/resume/stop verified |
 | MIME Structure | ✅ | 3 parts: plaintext + HTML + boundary |
+| Usage Tracking | ✅ | Credits + tokens accumulate across sessions |
+| Loading UI | ✅ | Animated overlays with phase-aware icons |
+| Resume/Restart | ✅ | Dialog appears on partial drafts, both paths work |
 | Logs | ✅ | Clean — only expected Groq rate-limit warnings |
 
 ---
@@ -225,18 +257,16 @@ open /Applications/JobBus.app
 ### High Priority
 - [ ] **Code signing & notarization** — eliminate the `xattr -cr` requirement
 - [ ] **Unit test expansion** — 58 tests exist but need coverage for new features (onboarding, SMTP validation)
-- [ ] **Pause/Resume E2E test** — needs a campaign with 5+ contacts to verify
 
 ### Medium Priority
 - [ ] **Email tracking** — open/click tracking via pixel or link wrapping
 - [ ] **Follow-up sequences** — auto-send follow-ups after N days if no reply
-- [ ] **Contact enrichment** — LinkedIn profile scraping for better personalization
 - [ ] **Template library** — pre-built email templates for common job types
 - [ ] **Campaign history** — persist sent campaigns for analytics
+- [ ] **Usage stats detail view** — expandable panel showing per-session breakdown, cost estimates
 
 ### Low Priority
 - [ ] **Dark mode polish** — verify all views look good in dark mode
-- [ ] **Keyboard shortcuts** — ⌘N (new campaign), ⌘S (save), ⌘Enter (send)
 - [ ] **Auto-update** — Sparkle framework for in-app updates
 - [ ] **Export** — export sent emails / contacts to CSV
 - [ ] **Multi-resume** — support different resumes for different job types
@@ -280,3 +310,7 @@ brew install mailhog && mailhog  # Start MailHog
 4. **Groq rate limits**: Free tier hits 429 frequently — the retry logic handles it (3 attempts with backoff)
 5. **Resume attachment**: Only attached for contacts with `recipientType` of `.recruiter` or `.hiringManager`
 6. **Sandbox default**: `sandboxMode` defaults to `true` — users must explicitly turn it off for production sends
+7. **Apollo 2-step flow**: Discovery via `/mixed_people/api_search` returns only IDs + obfuscated names; enrichment via `/people/match` with Apollo ID is mandatory to get emails
+8. **Apollo rate limiting**: 1.5s inter-request delay prevents 403 blocks; enrichment retry waits 60s on 429
+9. **Usage tracker persistence**: `Task.detached` for file I/O — must capture `Self.fileURL` before the detached context to avoid `@MainActor` isolation errors
+10. **Notification-based tracking**: AI providers post token/credit notifications (decoupled from AppViewModel) — subscribed via Combine in `init()`
