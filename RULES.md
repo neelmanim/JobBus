@@ -241,6 +241,9 @@ open /Applications/JobBus.app
 - [ ] **Export** — export sent emails / contacts to CSV
 - [ ] **Multi-resume** — support different resumes for different job types
 
+### Backlog
+- [ ] **iOS / iPadOS port** — ~3-4 weeks effort, ~60% code reuse. Recommend iPad-first (skip iPhone). Key blockers: background execution (iOS kills after 30s), App Store rejection risk (use TestFlight). Views (3,800 lines) need full rewrite for iOS nav patterns. Full analysis: `ios_feasibility_analysis.md` in conversation artifacts.
+
 ---
 
 ## 🧰 Development Commands
