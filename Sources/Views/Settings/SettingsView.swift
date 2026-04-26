@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var saveConfirmation = ""
     @State private var isEditingSearchKey = false
     @State private var isEditingAIKey = false
+    @State private var showSMTPGuide = false
     
     private let accentGradient = LinearGradient(
         colors: [Color(hex: "#8b5cf6"), Color(hex: "#6366f1")],
@@ -267,6 +268,18 @@ struct SettingsView: View {
             // SMTP Configuration
             SettingsCard(title: "SMTP Configuration", icon: "server.rack", color: "#10b981") {
                 VStack(alignment: .leading, spacing: 14) {
+                    Button {
+                        showSMTPGuide = true
+                    } label: {
+                        Label("Setup Guide", systemImage: "questionmark.circle")
+                            .font(.caption.weight(.medium))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Color(hex: "#10b981"))
+                    .help("Step-by-step guide for setting up Gmail, Outlook, or custom SMTP")
+                    .sheet(isPresented: $showSMTPGuide) {
+                        SMTPSetupGuideView()
+                    }
                     Picker("Email Provider", selection: $vm.settings.emailProvider) {
                         ForEach(EmailProviderType.allCases) { provider in
                             Label(provider.rawValue, systemImage: provider.icon).tag(provider)
@@ -286,17 +299,19 @@ struct SettingsView: View {
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: 300)
                     }
+                    .help("The email address you'll send outreach from (e.g. yourname@gmail.com)")
                     
                     LabeledContent("Display Name") {
                         TextField("John Doe", text: $vm.settings.smtpDisplayName)
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: 300)
                     }
+                    .help("The name recipients see in their inbox (e.g. 'Jane Doe')")
                     
                     HStack(spacing: 10) {
                         Text("App Password")
                             .frame(width: 110, alignment: .trailing)
-                        TextField("Generated app password...", text: $smtpPasswordInput)
+                        SecureField("Generated app password...", text: $smtpPasswordInput)
                             .textFieldStyle(.roundedBorder)
                         Button {
                             KeychainService.shared.save(key: .smtpPassword, value: smtpPasswordInput)
@@ -375,17 +390,20 @@ struct SettingsView: View {
                                 .font(.callout)
                         }
                     }
+                    .help("Wait time between sending each email. Higher = safer. Recommended: 15-30s for live, 3s for sandbox.")
                     
                     LabeledContent("Daily send limit") {
                         TextField("", value: $vm.settings.maxPerDay, format: .number)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 70)
                     }
+                    .help("Maximum emails to send per day. Campaign pauses after hitting this limit. Recommended: 30-50 for new accounts.")
                     
                     Divider().padding(.vertical, 2)
                     
                     Toggle("Business hours only", isOn: $vm.settings.businessHoursOnly)
                         .toggleStyle(.switch)
+                        .help("Only send during work hours (recipient's perspective). Emails sent at 3 AM look spammy.")
                     
                     if vm.settings.businessHoursOnly {
                         HStack(spacing: 12) {
@@ -403,6 +421,7 @@ struct SettingsView: View {
                     
                     Toggle("Warm-up mode (gradual daily increase)", isOn: $vm.settings.warmUpEnabled)
                         .toggleStyle(.switch)
+                        .help("Start with fewer emails per day and gradually increase. Helps build sender reputation with email providers.")
                 }
             }
             
@@ -419,6 +438,7 @@ struct SettingsView: View {
                         }
                     }
                     .toggleStyle(.switch)
+                    .help("When ON, all emails are sent to a local test server (Mailhog) instead of real recipients. Perfect for testing your campaign before going live.")
                     
                     if vm.settings.sandboxMode {
                         Divider().padding(.vertical, 2)

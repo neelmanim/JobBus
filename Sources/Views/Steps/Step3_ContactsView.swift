@@ -47,6 +47,7 @@ struct Step3_ContactsView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(Color(hex: "#8b5cf6"))
                     .disabled(vm.isSearching || vm.isGenerating || vm.isLoading)
+                    .help("Search for contacts matching your resume using the configured contact provider")
                     
                     if vm.isSearching {
                         Button {
@@ -63,6 +64,7 @@ struct Step3_ContactsView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Color(hex: "#3b82f6"))
+                    .help("Import contacts from a CSV file with columns: first_name, last_name, email, title, company")
                     .disabled(vm.isSearching || vm.isGenerating)
                     
                     Button { showManualEntry = true } label: {
@@ -183,13 +185,14 @@ struct Step3_ContactsView: View {
                     }
                     .width(min: 150, ideal: 200)
                     
-                    TableColumn("Type") { contact in
+                    TableColumn("Type") { (contact: Contact) in
                         Text(contact.recipientType.label)
                             .font(.caption)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color(hex: "#8b5cf6").opacity(0.12))
                             .cornerRadius(6)
+                            .help("How the AI adjusts tone — Recruiter gets direct asks, Hiring Manager gets value propositions")
                     }
                     .width(min: 80, ideal: 110)
                     
@@ -258,6 +261,7 @@ struct Step3_ContactsView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(Color(hex: "#8b5cf6"))
                 .disabled(selected == 0 || vm.isGenerating || vm.isSearching)
+                .help("Generate personalized email drafts for all selected contacts using AI")
             }
             .padding(16)
             .background(.bar)

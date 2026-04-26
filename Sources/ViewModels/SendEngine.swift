@@ -18,6 +18,10 @@ class SendEngine {
     /// Current delay between emails (adapts based on failure rate)
     private var currentDelay: Double = 0
     
+    /// Shared campaign state — read by the send loop, written by pause/resume/stop.
+    /// This MUST be a class property (not a Task-local var) so external calls actually affect the loop.
+    private(set) var campaignState: CampaignStatus = .idle
+    
     // MARK: - Campaign Execution
     
     /// Start sending approved drafts.
@@ -44,10 +48,10 @@ class SendEngine {
         sentAddresses.removeAll()
         consecutiveFailures = 0
         currentDelay = settings.delaySeconds
+        campaignState = .running
         
         var sentCount = 0
         var failedCount = 0
-        var status: CampaignStatus = .running
         
         log.section("CAMPAIGN START")
         log.info("Total to send: \(approvedDrafts.count)")
@@ -57,11 +61,11 @@ class SendEngine {
         
         sendTask = Task {
             for (index, draft) in approvedDrafts.enumerated() {
-                // Check pause/stop
-                while status == .paused {
+                // Check pause/stop — reads the shared campaignState property
+                while campaignState == .paused {
                     try? await Task.sleep(for: .seconds(1))
                 }
-                if status == .stopped || Task.isCancelled { break }
+                if campaignState == .stopped || Task.isCancelled { break }
                 
                 // Business hours check
                 if settings.businessHoursOnly {
@@ -70,7 +74,7 @@ class SendEngine {
                 
                 // Daily limit check
                 if sentCount >= settings.maxPerDay {
-                    status = .paused
+                    campaignState = .paused
                     onStatusChange(.paused)
                     onPause("Daily limit reached (\(settings.maxPerDay)). Will resume tomorrow.")
                     break
@@ -78,13 +82,13 @@ class SendEngine {
                 
                 // First-3 hold: pause after sending 3 so user can verify
                 if index == 3 && sentCount == 3 {
-                    status = .paused
+                    campaignState = .paused
                     onStatusChange(.paused)
                     onPause("Sent 3 emails. Check your Sent folder — do they look right? Resume when ready.")
-                    while status == .paused {
+                    while campaignState == .paused {
                         try? await Task.sleep(for: .seconds(1))
                     }
-                    if status == .stopped { break }
+                    if campaignState == .stopped { break }
                 }
                 
                 // Duplicate prevention: skip if we already sent to this address
@@ -136,20 +140,20 @@ class SendEngine {
                     // Anomaly detection: >20% failure → auto-pause
                     let total = sentCount + failedCount
                     if total >= 5 && Double(failedCount) / Double(total) > 0.2 {
-                        status = .paused
+                        campaignState = .paused
                         onStatusChange(.paused)
                         onPause("High failure rate detected (\(failedCount)/\(total) failed). Paused for review.")
                     }
                 }
                 
                 // Delay between emails (adaptive)
-                if status == .running {
+                if campaignState == .running {
                     try? await Task.sleep(for: .seconds(currentDelay))
                 }
             }
             
-            if status == .running {
-                status = .complete
+            if campaignState == .running {
+                campaignState = .complete
                 log.section("CAMPAIGN COMPLETE")
                 log.info("Sent: \(sentCount), Failed: \(failedCount), Total: \(approvedDrafts.count)")
                 onStatusChange(.complete)
@@ -160,14 +164,17 @@ class SendEngine {
     }
     
     func pause() {
+        campaignState = .paused
         log.info("Campaign PAUSED")
     }
     
     func resume() {
+        campaignState = .running
         log.info("Campaign RESUMED")
     }
     
     func stop() {
+        campaignState = .stopped
         sendTask?.cancel()
         log.warn("Campaign STOPPED")
     }
@@ -178,11 +185,14 @@ class SendEngine {
         let calendar = Calendar.current
         let hour = calendar.component(.hour, from: Date())
         if hour < settings.businessHoursStart || hour >= settings.businessHoursEnd {
-            let nextStart = calendar.nextDate(
+            guard let nextStart = calendar.nextDate(
                 after: Date(),
                 matching: DateComponents(hour: settings.businessHoursStart),
                 matchingPolicy: .nextTime
-            )!
+            ) else {
+                log.warn("Could not compute next business hours start — skipping wait")
+                return
+            }
             let waitTime = nextStart.timeIntervalSince(Date())
             onProgress("Waiting for business hours (\(settings.businessHoursStart):00)...")
             try? await Task.sleep(for: .seconds(max(1, waitTime)))

@@ -6,6 +6,14 @@ struct Step5_SendView: View {
     @State private var confirmText = ""
     @State private var showConfirmDialog = false
     
+    /// Pre-flight check: SMTP must be configured (email + password, unless sandbox)
+    var smtpReady: Bool {
+        guard !vm.settings.smtpEmail.isEmpty else { return false }
+        if vm.settings.sandboxMode { return true }
+        let password = KeychainService.shared.get(key: .smtpPassword) ?? ""
+        return !password.isEmpty
+    }
+    
     var approvedCount: Int { vm.drafts.filter { $0.status == .approved }.count }
     /// Use campaignTotal (captured at launch) for progress; fall back to approvedCount pre-launch
     var totalForProgress: Int { vm.campaignTotal > 0 ? vm.campaignTotal : approvedCount }
@@ -60,6 +68,28 @@ struct Step5_SendView: View {
                     .padding(.horizontal, 40)
                 }
                 
+                // SMTP not configured warning (EC6)
+                if !smtpReady && vm.campaignStatus == .idle {
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.shield.fill")
+                            .foregroundColor(.red)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("SMTP not configured")
+                                .font(.subheadline.bold())
+                            Text(vm.settings.smtpEmail.isEmpty
+                                ? "Go to Settings → Email and enter your email address and app password."
+                                : "App password missing. Go to Settings → Email → App Password to set it.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.red.opacity(0.08))
+                    .cornerRadius(8)
+                    .padding(.horizontal, 40)
+                }
+                
                 // Progress Ring
                 ZStack {
                     Circle()
@@ -90,8 +120,11 @@ struct Step5_SendView: View {
                 // Stats Cards
                 HStack(spacing: 16) {
                     StatCard(icon: "checkmark.circle.fill", label: "Sent", value: vm.sentCount, color: "#10b981")
+                        .help("Emails successfully delivered to the recipient's mail server")
                     StatCard(icon: "xmark.circle.fill", label: "Failed", value: vm.failedCount, color: "#ef4444")
+                        .help("Emails that failed to send — check the activity log below for details")
                     StatCard(icon: "clock.fill", label: "Pending", value: max(0, totalForProgress - vm.sentCount - vm.failedCount), color: "#f59e0b")
+                        .help("Approved emails still waiting to be sent")
                 }
                 .padding(.horizontal, 40)
                 
@@ -289,7 +322,8 @@ struct Step5_SendView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(Color(hex: "#8b5cf6"))
-                        .disabled(approvedCount == 0 || vm.settings.smtpEmail.isEmpty)
+                        .disabled(approvedCount == 0 || !smtpReady)
+                        .help(approvedCount == 0 ? "Approve at least one draft first" : !smtpReady ? "Configure SMTP in Settings first" : "Send \(approvedCount) approved emails")
                         
                     case .running:
                         Button { vm.pauseCampaign() } label: {

@@ -139,7 +139,11 @@ class DuplicateDetector {
         
         for contact in contacts {
             let key = contact.email.lowercased()
-            if key.isEmpty { unique.append(contact); continue }
+            if key.isEmpty {
+                // EC7: Don't pass contacts with no email into the pipeline — they'll fail at SMTP
+                duplicates.append(contact)
+                continue
+            }
             if seen.contains(key) {
                 duplicates.append(contact)
             } else {

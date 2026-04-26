@@ -139,6 +139,7 @@ struct Step4_DraftsView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(vm.drafts.count > 10 && reviewedCount < 10)
+                    .help("Approve all drafts you haven't reviewed yet. Review at least 10 first to ensure quality.")
                     
                     Button {
                         vm.currentStep = .send
@@ -149,6 +150,7 @@ struct Step4_DraftsView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(Color(hex: "#8b5cf6"))
                     .disabled(approvedCount == 0)
+                    .help("\(approvedCount) emails approved and ready to send")
                 }
             }
             .padding(16)
@@ -226,6 +228,7 @@ struct DraftCard: View {
                             .font(.caption2.monospaced())
                     }
                     .foregroundColor(Color(hex: draft.qualityScore.grade.colorHex))
+                    .help("Quality score: \(draft.qualityScore.score)/11 — checks name match, company mention, length, CTA, and more")
                 }
                 
                 // Status indicator
@@ -298,6 +301,7 @@ struct DraftCard: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(draft.status == .generating)
+                .help("Re-generate this email using AI. The new version may score differently.")
                 
                 Spacer()
                 

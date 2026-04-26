@@ -139,6 +139,9 @@ class AppSettings: ObservableObject, Codable {
     // Writing style samples — user-provided email examples for tone matching
     @Published var sampleEmails: [String]
     
+    // Onboarding — tracks whether user has completed first-run wizard
+    @Published var hasCompletedOnboarding: Bool
+    
     enum CodingKeys: CodingKey {
         case searchProvider, aiProvider, emailProvider
         case smtpEmail, smtpDisplayName, customSmtpHost, customSmtpPort
@@ -146,7 +149,7 @@ class AppSettings: ObservableObject, Codable {
         case warmUpEnabled, contactCount, sandboxMode, sandboxHost, sandboxPort
         case signatureName, signatureTitle, signatureLinkedin, signaturePhone
         case ollamaModel, ollamaBaseURL, customPromptInstructions
-        case sampleEmails
+        case sampleEmails, hasCompletedOnboarding
     }
     
     init() {
@@ -175,6 +178,7 @@ class AppSettings: ObservableObject, Codable {
         self.ollamaBaseURL = "http://localhost:11434"
         self.customPromptInstructions = ""
         self.sampleEmails = []
+        self.hasCompletedOnboarding = false
     }
     
     required init(from decoder: Decoder) throws {
@@ -204,6 +208,7 @@ class AppSettings: ObservableObject, Codable {
         ollamaBaseURL = try c.decodeIfPresent(String.self, forKey: .ollamaBaseURL) ?? "http://localhost:11434"
         customPromptInstructions = try c.decodeIfPresent(String.self, forKey: .customPromptInstructions) ?? ""
         sampleEmails = try c.decodeIfPresent([String].self, forKey: .sampleEmails) ?? []
+        hasCompletedOnboarding = try c.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
     }
     
     func encode(to encoder: Encoder) throws {
@@ -233,6 +238,7 @@ class AppSettings: ObservableObject, Codable {
         try c.encode(ollamaBaseURL, forKey: .ollamaBaseURL)
         try c.encode(customPromptInstructions, forKey: .customPromptInstructions)
         try c.encode(sampleEmails, forKey: .sampleEmails)
+        try c.encode(hasCompletedOnboarding, forKey: .hasCompletedOnboarding)
     }
     
     // MARK: - Persistence

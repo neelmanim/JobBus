@@ -37,6 +37,14 @@ struct JobBusApp: App {
             MainView()
                 .environmentObject(appViewModel)
                 .frame(minWidth: 1000, minHeight: 700)
+                .sheet(isPresented: Binding(
+                    get: { !appViewModel.settings.hasCompletedOnboarding },
+                    set: { if !$0 { appViewModel.settings.hasCompletedOnboarding = true; appViewModel.settings.save() } }
+                )) {
+                    OnboardingView()
+                        .environmentObject(appViewModel)
+                        .interactiveDismissDisabled()
+                }
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 1200, height: 800)
