@@ -5,6 +5,24 @@
 
 ---
 
+## 🔁 Session Protocol (READ THIS FIRST)
+
+### Starting a session
+```
+"I'm working on JobBus. Read @RULES.md for context."
+```
+
+### Ending a session
+```
+"Update RULES.md and push."
+```
+The AI will update the "Last Updated" date, "Bugs Fixed" table, "What's Next" list,
+and any architectural changes — then commit and push to git.
+
+**This ensures zero context loss between sessions, across any AI assistant.**
+
+---
+
 ## 🏗️ What Is JobBus?
 
 A **native macOS desktop application** (SwiftUI + Swift 5.9) that automates personalized job outreach:
