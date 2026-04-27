@@ -51,11 +51,13 @@ final class AppLogger {
         currentLogPath = logFile
         
         // Write header
+        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        let buildNumber = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "local"
         let header = """
         ═══════════════════════════════════════════════════════
         JobBus Session Log
         Started: \(Date())
-        App Version: 1.0
+        App Version: \(appVersion) (build \(buildNumber))
         OS: \(ProcessInfo.processInfo.operatingSystemVersionString)
         ═══════════════════════════════════════════════════════
         

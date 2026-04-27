@@ -5,7 +5,7 @@
 | Requirement | Minimum |
 |---|---|
 | **macOS** | 14.0 (Sonoma) or later |
-| **Xcode** | 15.0+ (for building from source) |
+| **Xcode** | 15.0+ (for building from source only) |
 | **Swift** | 5.9+ |
 | **Disk Space** | ~50 MB |
 | **RAM** | 4 GB recommended |
@@ -16,23 +16,45 @@
 
 ## Option 1: Install Pre-Built Binary (Easiest)
 
-If someone has shared the compiled `.app` bundle with you:
+If someone has shared the compiled `.app` bundle or `.zip` archive with you:
 
 ### Steps
 
-1. **Download** the `JobBus.app` file (or unzip `JobBus.zip`)
-
-2. **Move** it to your `Applications` folder:
+1. **Unzip** the archive (if you received a `.zip`):
    ```bash
-   mv ~/Downloads/JobBus.app /Applications/
+   unzip JobBus-v1.0.0-macOS.zip
    ```
 
-3. **First launch** — macOS may block it because it's from an unidentified developer:
-   - Right-click `JobBus.app` → **Open**
-   - Click **"Open"** in the security dialog
-   - Alternatively: `System Settings → Privacy & Security → Open Anyway`
+2. **⚠️ Remove macOS quarantine** (REQUIRED for unsigned apps):
 
-4. **Done!** The onboarding wizard will guide you through AI and email setup.
+   macOS marks files downloaded from the internet or received via AirDrop/WhatsApp/email as "quarantined". Without this step, you'll get **"JobBus.app is damaged and can't be opened"** — the app is NOT actually damaged.
+
+   ```bash
+   xattr -cr JobBus.app
+   ```
+
+   > **What this does**: Removes the `com.apple.quarantine` extended attribute that macOS applies to files from unidentified developers. This is safe — the app is open source and you can verify the code yourself.
+
+3. **Move** to Applications:
+   ```bash
+   mv JobBus.app /Applications/
+   ```
+
+4. **First launch** — if macOS still shows a Gatekeeper warning:
+   - **Method A** (recommended): Right-click `JobBus.app` → **Open** → Click **"Open"** in the dialog
+   - **Method B**: Go to `System Settings → Privacy & Security` → scroll down → click **"Open Anyway"** next to the JobBus warning
+   - **Method C** (terminal):
+     ```bash
+     open /Applications/JobBus.app
+     ```
+
+5. **Done!** The onboarding wizard will guide you through AI and email setup.
+
+### One-Liner Install
+
+```bash
+unzip JobBus-v1.0.0-macOS.zip && xattr -cr JobBus.app && mv JobBus.app /Applications/ && open /Applications/JobBus.app
+```
 
 ---
 
@@ -59,63 +81,28 @@ If someone has shared the compiled `.app` bundle with you:
    cd JobBus
    ```
 
-2. **Build the app** (release mode recommended):
+2. **Build and package** (recommended — creates a portable `.app` bundle):
    ```bash
-   swift build -c release
+   ./scripts/package.sh
    ```
-   This takes about 15-30 seconds on first build.
+   Output: `dist/JobBus.app` and `dist/JobBus-v1.0.0-macOS.zip`
 
-3. **Run the app**:
+3. **Install**:
    ```bash
-   .build/release/JobBus
+   cp -r dist/JobBus.app /Applications/
+   open /Applications/JobBus.app
    ```
 
-4. **(Optional) Create a portable `.app` bundle**:
-   ```bash
-   # Create the app bundle structure
-   mkdir -p JobBus.app/Contents/MacOS
-   mkdir -p JobBus.app/Contents/Resources
+### Alternative: Run Without Packaging
 
-   # Copy the binary
-   cp .build/release/JobBus JobBus.app/Contents/MacOS/
+If you just want to run it quickly without creating an `.app` bundle:
 
-   # Copy the app icon
-   cp Sources/Resources/AppIcon.png JobBus.app/Contents/Resources/
+```bash
+swift build -c release
+.build/release/JobBus
+```
 
-   # Create the Info.plist
-   cat > JobBus.app/Contents/Info.plist << 'EOF'
-   <?xml version="1.0" encoding="UTF-8"?>
-   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-   <plist version="1.0">
-   <dict>
-       <key>CFBundleExecutable</key>
-       <string>JobBus</string>
-       <key>CFBundleIdentifier</key>
-       <string>com.jobbus.app</string>
-       <key>CFBundleName</key>
-       <string>JobBus</string>
-       <key>CFBundleDisplayName</key>
-       <string>JobBus</string>
-       <key>CFBundleVersion</key>
-       <string>1.0</string>
-       <key>CFBundleShortVersionString</key>
-       <string>1.0</string>
-       <key>CFBundleIconFile</key>
-       <string>AppIcon</string>
-       <key>CFBundlePackageType</key>
-       <string>APPL</string>
-       <key>LSMinimumSystemVersion</key>
-       <string>14.0</string>
-       <key>NSHighResolutionCapable</key>
-       <true/>
-   </dict>
-   </plist>
-   EOF
-
-   # Move to Applications
-   mv JobBus.app /Applications/
-   echo "✅ JobBus.app installed to /Applications/"
-   ```
+> **Note**: Running the raw binary works but won't show a Dock icon or appear in Spotlight. Use `./scripts/package.sh` for a proper app experience.
 
 ---
 
@@ -178,6 +165,38 @@ JobBus starts in **Sandbox Mode** by default — emails go to a local test serve
 
 ---
 
+## Sharing JobBus with Others
+
+When distributing the app to someone else, include these instructions:
+
+### For the Sender (You)
+
+```bash
+# Build and package
+./scripts/package.sh
+
+# Share this file via AirDrop, email, or any file sharing service:
+# dist/JobBus-v1.0.0-macOS.zip
+```
+
+### Instructions to Include for the Recipient
+
+Copy-paste this to whoever you're sharing with:
+
+```
+To install JobBus:
+
+1. Unzip the file:     unzip JobBus-v1.0.0-macOS.zip
+2. Remove quarantine:  xattr -cr JobBus.app
+3. Move to Apps:       mv JobBus.app /Applications/
+4. Launch:             open /Applications/JobBus.app
+
+Or as one command:
+unzip JobBus-v1.0.0-macOS.zip && xattr -cr JobBus.app && mv JobBus.app /Applications/ && open /Applications/JobBus.app
+```
+
+---
+
 ## Data & Configuration Locations
 
 | What | Path |
@@ -186,18 +205,45 @@ JobBus starts in **Sandbox Mode** by default — emails go to a local test serve
 | **Credentials** | `~/Library/Application Support/JobBus/credentials.dat` (encrypted) |
 | **Session Logs** | `~/Library/Application Support/JobBus/logs/` |
 | **Resume Copy** | `~/Library/Application Support/JobBus/resume_attachment.pdf` |
+| **Usage Stats** | `~/Library/Application Support/JobBus/usage_stats.json` |
 
 ---
 
 ## Troubleshooting
 
 ### "App is damaged and can't be opened"
+
+This is macOS Gatekeeper blocking unsigned apps. The app is NOT damaged.
+
+**Fix:**
 ```bash
+# Remove the quarantine attribute
 xattr -cr /Applications/JobBus.app
+
+# If that doesn't work, also try:
+sudo xattr -rd com.apple.quarantine /Applications/JobBus.app
+
+# Then open:
+open /Applications/JobBus.app
 ```
-Then try opening again.
+
+**Why this happens:** macOS adds a `com.apple.quarantine` extended attribute to any file downloaded from the internet or received via AirDrop/USB/email from an unidentified developer. Since JobBus is not code-signed with an Apple Developer certificate, Gatekeeper blocks it. The `xattr -cr` command removes this attribute.
+
+### "Cannot be opened because the developer cannot be verified"
+
+Same root cause as above. Fix:
+1. Run `xattr -cr /Applications/JobBus.app`
+2. **OR** go to `System Settings → Privacy & Security` → click **"Open Anyway"**
+
+### App opens but immediately closes
+
+Check that you're running macOS 14.0 (Sonoma) or later:
+```bash
+sw_vers -productVersion
+```
 
 ### Build fails with "module not found"
+
 Make sure Xcode CLI tools are installed:
 ```bash
 xcode-select --install
@@ -205,6 +251,7 @@ sudo xcodebuild -license accept
 ```
 
 ### MailHog port already in use
+
 ```bash
 lsof -ti :1025 | xargs kill -9
 lsof -ti :8025 | xargs kill -9
@@ -212,12 +259,14 @@ mailhog
 ```
 
 ### Emails not sending (production mode)
+
 1. Check Settings → Email → verify email and app password are set
 2. Ensure you're using an **App Password**, not your regular password
 3. Check the in-app SMTP Setup Guide (Settings → Email → "Setup Guide")
 4. Check logs at `~/Library/Application Support/JobBus/logs/`
 
 ### AI not generating emails
+
 1. Verify your API key is saved (Settings → Providers → green checkmark)
 2. If using Ollama: ensure it's running (`ollama serve`) and the model is pulled
 3. Check logs for rate-limiting warnings (Groq free tier: ~30 req/min)
@@ -241,14 +290,16 @@ rm -rf ~/Library/Application\ Support/JobBus/
 ## Quick Reference
 
 ```bash
-# Clone & build
+# === Pre-built install (one-liner) ===
+unzip JobBus-v1.0.0-macOS.zip && xattr -cr JobBus.app && mv JobBus.app /Applications/ && open /Applications/JobBus.app
+
+# === Build from source ===
 git clone https://github.com/neelmanim/JobBus.git && cd JobBus
-swift build -c release
+./scripts/package.sh
+cp -r dist/JobBus.app /Applications/
+open /Applications/JobBus.app
 
-# Run
-.build/release/JobBus
-
-# Test emails (separate terminal)
+# === Test emails (separate terminal) ===
 brew install mailhog && mailhog
 # Open http://localhost:8025
 ```

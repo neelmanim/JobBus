@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/platform-macOS%2014%2B-blue" />
   <img src="https://img.shields.io/badge/swift-5.9%2B-orange" />
   <img src="https://img.shields.io/badge/license-MIT-green" />
-  <img src="https://img.shields.io/badge/version-1.0.0-purple" />
+  <img src="https://img.shields.io/badge/version-1.1.4-purple" />
 </p>
 
 ---
@@ -56,12 +56,14 @@ JobBus is a native macOS application that automates the hardest part of job hunt
 ### Option A: Pre-built App
 
 ```bash
-# Download and install
+# Download, remove quarantine, install, and launch
 unzip JobBus-v1.0.0-macOS.zip
-xattr -cr JobBus.app          # Remove quarantine (required for unsigned apps)
+xattr -cr JobBus.app          # ⚠️ REQUIRED — removes macOS quarantine (prevents "damaged" error)
 mv JobBus.app /Applications/
 open /Applications/JobBus.app
 ```
+
+> **⚠️ Important**: The `xattr -cr` step is mandatory. Without it, macOS will show **"JobBus.app is damaged and can't be opened"** — the app is NOT damaged, it's just unsigned. See [INSTALL.md](INSTALL.md) for details.
 
 ### Option B: Build from Source
 

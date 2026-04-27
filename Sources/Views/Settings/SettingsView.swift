@@ -59,6 +59,7 @@ struct SettingsView: View {
                 Label("Email", systemImage: "envelope.fill").tag(1)
                 Label("Campaign", systemImage: "paperplane.fill").tag(2)
                 Label("AI Prompt", systemImage: "wand.and.stars").tag(3)
+                Label("About", systemImage: "info.circle.fill").tag(4)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 28)
@@ -77,6 +78,8 @@ struct SettingsView: View {
                     case 2: campaignTab
                             .transition(.opacity)
                     case 3: aiPromptTab
+                            .transition(.opacity)
+                    case 4: aboutTab
                             .transition(.opacity)
                     default: EmptyView()
                     }
@@ -699,6 +702,161 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+    
+    // MARK: - About & Logs Tab
+    private var aboutTab: some View {
+        VStack(spacing: 24) {
+            // App Info
+            SettingsCard(title: "About JobBus", icon: "bus.fill", color: "#8b5cf6") {
+                VStack(spacing: 14) {
+                    HStack(spacing: 16) {
+                        Image(systemName: "bus.fill")
+                            .font(.system(size: 36))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [Color(hex: "#8b5cf6"), Color(hex: "#3b82f6")],
+                                    startPoint: .topLeading, endPoint: .bottomTrailing
+                                )
+                            )
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("JobBus")
+                                .font(.title3.bold())
+                            
+                            let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+                            let buildNum = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "local"
+                            Text("v\(appVersion) (build \(buildNum))")
+                                .font(.caption.monospaced())
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                    }
+                    
+                    Divider()
+                    
+                    HStack(spacing: 12) {
+                        infoChip(icon: "swift", label: "Swift 5.9+", color: "#f05138")
+                        infoChip(icon: "desktopcomputer", label: "macOS 14+", color: "#3b82f6")
+                        infoChip(icon: "shippingbox.fill", label: "SPM", color: "#10b981")
+                    }
+                }
+            }
+            
+            // Logs
+            SettingsCard(title: "Logs & Diagnostics", icon: "doc.text.fill", color: "#f59e0b") {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Logs help diagnose issues. Each session creates a new log file with timestamps, provider calls, and campaign activity.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    
+                    // Log stats
+                    let logFiles = AppLogger.allLogFiles
+                    let totalSize = logFiles.reduce(0) { total, url in
+                        total + ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0)
+                    }
+                    
+                    HStack(spacing: 16) {
+                        logStat(value: "\(logFiles.count)", label: "Log files")
+                        logStat(value: ByteCountFormatter.string(fromByteCount: Int64(totalSize), countStyle: .file), label: "Total size")
+                        if let current = AppLogger.shared.logFilePath {
+                            logStat(value: current.lastPathComponent.replacingOccurrences(of: "jobbus_", with: "").replacingOccurrences(of: ".log", with: ""), label: "Current session")
+                        }
+                    }
+                    .padding(10)
+                    .background(Color.primary.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    
+                    Divider()
+                    
+                    // Action buttons
+                    HStack(spacing: 12) {
+                        Button {
+                            if let logsDir = AppLogger.shared.logFilePath?.deletingLastPathComponent() {
+                                NSWorkspace.shared.open(logsDir)
+                            }
+                        } label: {
+                            Label("Open Logs Folder", systemImage: "folder.fill")
+                                .font(.callout.weight(.medium))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Color(hex: "#f59e0b"))
+                        .help("Opens ~/Library/Application Support/JobBus/logs/ in Finder")
+                        
+                        Button {
+                            if let currentLog = AppLogger.shared.logFilePath {
+                                NSWorkspace.shared.open(currentLog)
+                            }
+                        } label: {
+                            Label("View Current Log", systemImage: "doc.text.magnifyingglass")
+                                .font(.callout.weight(.medium))
+                        }
+                        .buttonStyle(.bordered)
+                        .help("Opens the current session's log file in Console/TextEdit")
+                        
+                        Spacer()
+                        
+                        if logFiles.count > 5 {
+                            Button {
+                                // Keep only the 3 most recent logs
+                                let toDelete = logFiles.dropFirst(3)
+                                for file in toDelete {
+                                    try? FileManager.default.removeItem(at: file)
+                                }
+                                showSaveConfirmation("Cleared \(toDelete.count) old log files")
+                            } label: {
+                                Label("Clear Old Logs", systemImage: "trash")
+                                    .font(.caption.weight(.medium))
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.red)
+                        }
+                    }
+                    
+                    // Path hint
+                    HStack(spacing: 6) {
+                        Image(systemName: "info.circle.fill")
+                            .foregroundColor(.blue)
+                            .font(.caption2)
+                        Text("Logs are stored at: ~/Library/Application Support/JobBus/logs/")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - About Tab Components
+    @ViewBuilder
+    private func infoChip(icon: String, label: String, color: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.caption2)
+                .foregroundColor(Color(hex: color))
+            Text(label)
+                .font(.caption.weight(.medium))
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Color(hex: color).opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+    
+    @ViewBuilder
+    private func logStat(value: String, label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.caption.weight(.bold).monospacedDigit())
+            Text(label)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
     }
     
     // MARK: - Pipeline Step Components

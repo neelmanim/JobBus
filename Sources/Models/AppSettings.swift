@@ -27,16 +27,30 @@ enum SearchProviderType: String, Codable, CaseIterable, Identifiable {
 
 enum AIProviderType: String, Codable, CaseIterable, Identifiable {
     case ollama = "Ollama (Local)"
-    case gemini = "Gemini Flash"
+    case gemini = "Gemini"
     case groq = "Groq"
     
     var id: String { rawValue }
     
+    // Custom decoder to handle migration from old "Gemini Flash" raw value
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue {
+        case "Gemini Flash": self = .gemini  // Migration: old name → new
+        default:
+            guard let value = AIProviderType(rawValue: rawValue) else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown AIProviderType: \(rawValue)")
+            }
+            self = value
+        }
+    }
+    
     var description: String {
         switch self {
         case .ollama: return "Free, private, runs locally on your Mac. Requires Ollama installed."
-        case .gemini: return "Google's free API. Fast, high quality. Requires API key."
-        case .groq: return "Ultra-fast cloud inference. Free tier available. Requires API key."
+        case .gemini: return "Google's free API. Auto-selects the best available model. Requires API key."
+        case .groq: return "Ultra-fast cloud inference. Auto-selects the best available model. Requires API key."
         }
     }
     

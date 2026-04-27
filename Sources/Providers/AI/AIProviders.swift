@@ -46,21 +46,32 @@ class OllamaProvider: AIProvider {
     }
 }
 
-// MARK: - Gemini Flash AI Provider
+// MARK: - Gemini AI Provider (Dynamic Model Discovery)
 class GeminiFlashProvider: AIProvider {
-    let name = "Gemini Flash"
+    let name = "Gemini"
     let providerType: AIProviderType = .gemini
     
     private var apiKey: String { KeychainService.shared.get(key: .geminiApiKey) ?? "" }
     
-    // Models to try in order (different quota buckets)
-    private let models = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"]
+    /// Cached list of available models — fetched once per app session
+    private var cachedModels: [String]?
+    
+    /// Preference order: lightweight/fast models first, expensive last
+    /// Models containing these substrings are sorted accordingly
+    private let modelPreference = ["flash-lite", "flash", "pro"]
     
     func generate(prompt: String) async throws -> String {
-        guard !apiKey.isEmpty else { throw ProviderError.notConfigured("Gemini API key not set. Go to Settings → Providers to add your key from aistudio.google.com/apikey") }
+        guard !apiKey.isEmpty else {
+            throw ProviderError.notConfigured("Gemini API key not set. Go to Settings → Providers to add your key from aistudio.google.com/apikey")
+        }
+        
+        let models = try await getAvailableModels()
+        guard !models.isEmpty else {
+            throw ProviderError.serviceUnavailable("No Gemini models available for generateContent. Check your API key permissions.")
+        }
         
         var lastError: Error?
-        log.debug("Gemini: starting generation (\(models.count) models available)")
+        log.debug("Gemini: starting generation (\(models.count) models: \(models.joined(separator: ", ")))")
         
         for model in models {
             do {
@@ -68,7 +79,6 @@ class GeminiFlashProvider: AIProvider {
                 log.debug("Gemini: \(model) returned \(result.count) chars")
                 return result
             } catch ProviderError.rateLimited(let msg) {
-                // Try next model (different quota bucket)
                 lastError = ProviderError.rateLimited(msg)
                 log.warn("Gemini: \(model) rate limited, trying next...")
                 continue
@@ -79,6 +89,78 @@ class GeminiFlashProvider: AIProvider {
         
         throw lastError ?? ProviderError.serviceUnavailable("All Gemini models exhausted")
     }
+    
+    // MARK: - Dynamic Model Discovery
+    
+    /// Fetches available models from Gemini's ListModels API, filters for generateContent support,
+    /// and sorts by preference (flash-lite → flash → pro). Cached for the session.
+    private func getAvailableModels() async throws -> [String] {
+        if let cached = cachedModels { return cached }
+        
+        let fallback = ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]
+        
+        // Fetch with pageSize=100 to avoid pagination truncating the list
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models?key=\(apiKey)&pageSize=100")!
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        
+        // Wrap in do/catch — network errors (no internet, DNS, timeout) should not crash generation
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            log.warn("Gemini: ListModels network error (\(error.localizedDescription)), using fallback")
+            cachedModels = fallback
+            return fallback
+        }
+        
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            log.warn("Gemini: ListModels failed, using fallback model names")
+            cachedModels = fallback
+            return fallback
+        }
+        
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let modelList = json["models"] as? [[String: Any]]
+        else {
+            log.warn("Gemini: ListModels parse failed, using fallback model names")
+            cachedModels = fallback
+            return fallback
+        }
+        
+        // Filter for models that support generateContent and extract short names
+        let available = modelList.compactMap { model -> String? in
+            guard let name = model["name"] as? String,
+                  let methods = model["supportedGenerationMethods"] as? [String],
+                  methods.contains("generateContent")
+            else { return nil }
+            // API returns "models/gemini-2.5-flash" — strip the "models/" prefix
+            return name.hasPrefix("models/") ? String(name.dropFirst(7)) : name
+        }
+        // Filter to only "gemini-" models (skip embedding-only, legacy, etc.)
+        .filter { $0.hasPrefix("gemini-") }
+        
+        // If filtering removed everything, use fallback
+        guard !available.isEmpty else {
+            log.warn("Gemini: no generateContent models found, using fallback")
+            cachedModels = fallback
+            return fallback
+        }
+        
+        // Sort by preference: flash-lite first, then flash, then pro, then everything else
+        let sorted = available.sorted { a, b in
+            let aIdx = modelPreference.firstIndex(where: { a.contains($0) }) ?? modelPreference.count
+            let bIdx = modelPreference.firstIndex(where: { b.contains($0) }) ?? modelPreference.count
+            return aIdx < bIdx
+        }
+        
+        log.info("Gemini: discovered \(sorted.count) models: \(sorted.joined(separator: ", "))")
+        cachedModels = sorted
+        return sorted
+    }
+    
+    // MARK: - Model Call
     
     private func callModel(model: String, prompt: String) async throws -> String {
         let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)")!
@@ -97,13 +179,19 @@ class GeminiFlashProvider: AIProvider {
             throw ProviderError.serviceUnavailable("No response from Gemini")
         }
         
-        // Handle non-200 responses with actual error info
+        // Handle non-200 responses
         if http.statusCode != 200 {
             let errorBody = String(data: data, encoding: .utf8) ?? ""
             
             switch http.statusCode {
             case 429:
-                throw ProviderError.rateLimited("Gemini quota exceeded for \(model). Retrying with fallback model...")
+                throw ProviderError.rateLimited("Gemini quota exceeded for \(model). Trying next model...")
+            case 503:
+                throw ProviderError.rateLimited("Gemini model \(model) overloaded. Trying next model...")
+            case 404:
+                // Model removed since we last fetched — invalidate cache and try next
+                cachedModels = nil
+                throw ProviderError.rateLimited("Gemini model \(model) not found. Trying next...")
             case 401, 403:
                 throw ProviderError.invalidApiKey
             default:
@@ -120,19 +208,37 @@ class GeminiFlashProvider: AIProvider {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
+
     func isAvailable() async -> Bool { !apiKey.isEmpty }
 }
 
-// MARK: - Groq AI Provider
+// MARK: - Groq AI Provider (Dynamic Model Discovery)
 class GroqProvider: AIProvider {
     let name = "Groq"
     let providerType: AIProviderType = .groq
     
     private var apiKey: String { KeychainService.shared.get(key: .groqApiKey) ?? "" }
     
+    /// Cached list of available models — fetched once per app session
+    private var cachedModels: [String]?
+    
+    /// Preference order: fast/small models first (for email generation, we don't need massive models)
+    /// Models containing these substrings are sorted accordingly
+    private let modelPreference = ["instant", "versatile", "preview"]
+    
+    /// Model IDs to skip (not suitable for chat/email generation)
+    private let skipPatterns = ["whisper", "tts", "guard", "embed", "vision", "tool-use"]
+    
     func generate(prompt: String) async throws -> String {
         let key = apiKey
-        guard !key.isEmpty else { throw ProviderError.notConfigured("Groq API key not set. Go to Settings → Providers to add your key.") }
+        guard !key.isEmpty else {
+            throw ProviderError.notConfigured("Groq API key not set. Go to Settings → Providers to add your key.")
+        }
+        
+        let models = try await getAvailableModels(key: key)
+        guard !models.isEmpty else {
+            throw ProviderError.serviceUnavailable("No Groq models available. Check your API key permissions.")
+        }
         
         // Retry with exponential backoff on rate limit
         var lastError: Error?
@@ -142,13 +248,17 @@ class GroqProvider: AIProvider {
                 try? await Task.sleep(for: .milliseconds(backoffMs))
             }
             
+            // On retries after rate limit, try the next model if available
+            let modelIndex = min(attempt, models.count - 1)
+            let model = models[modelIndex]
+            
             do {
-                let result = try await callGroq(prompt: prompt, key: key)
-                log.debug("Groq: returned \(result.count) chars")
+                let result = try await callGroq(model: model, prompt: prompt, key: key)
+                log.debug("Groq: \(model) returned \(result.count) chars")
                 return result
             } catch ProviderError.rateLimited(let msg) {
                 lastError = ProviderError.rateLimited(msg)
-                log.warn("Groq: rate limited (attempt \(attempt + 1)/3), backing off...")
+                log.warn("Groq: \(model) rate limited (attempt \(attempt + 1)/3), backing off...")
                 continue
             } catch {
                 throw error
@@ -157,7 +267,81 @@ class GroqProvider: AIProvider {
         throw lastError ?? ProviderError.serviceUnavailable("Groq rate limit exceeded after retries")
     }
     
-    private func callGroq(prompt: String, key: String) async throws -> String {
+    // MARK: - Dynamic Model Discovery
+    
+    /// Fetches available models from Groq's OpenAI-compatible /models endpoint,
+    /// filters for chat-capable models, and sorts by preference. Cached for the session.
+    private func getAvailableModels(key: String) async throws -> [String] {
+        if let cached = cachedModels { return cached }
+        
+        let fallback = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+        
+        let url = URL(string: "https://api.groq.com/openai/v1/models")!
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 15
+        
+        // Wrap in do/catch — network errors should not crash generation
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            log.warn("Groq: ListModels network error (\(error.localizedDescription)), using fallback")
+            cachedModels = fallback
+            return fallback
+        }
+        
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            log.warn("Groq: ListModels failed, using fallback model name")
+            cachedModels = fallback
+            return fallback
+        }
+        
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let modelList = json["data"] as? [[String: Any]]
+        else {
+            log.warn("Groq: ListModels parse failed, using fallback model name")
+            cachedModels = fallback
+            return fallback
+        }
+        
+        // Extract model IDs, filter out non-chat models (whisper, tts, guard, etc.)
+        // Also check "active" status if present in the response
+        let available = modelList.compactMap { model -> String? in
+            guard let id = model["id"] as? String else { return nil }
+            // Skip inactive models if the API reports status
+            if let active = model["active"] as? Bool, !active { return nil }
+            // Skip models not suitable for text generation
+            let lower = id.lowercased()
+            if skipPatterns.contains(where: { lower.contains($0) }) { return nil }
+            return id
+        }
+        
+        // If filtering removed everything, use fallback
+        guard !available.isEmpty else {
+            log.warn("Groq: no chat models found after filtering, using fallback")
+            cachedModels = fallback
+            return fallback
+        }
+        
+        // Sort by preference: instant (fast) first, then versatile, then preview, then rest
+        let sorted = available.sorted { a, b in
+            let aLower = a.lowercased()
+            let bLower = b.lowercased()
+            let aIdx = modelPreference.firstIndex(where: { aLower.contains($0) }) ?? modelPreference.count
+            let bIdx = modelPreference.firstIndex(where: { bLower.contains($0) }) ?? modelPreference.count
+            return aIdx < bIdx
+        }
+        
+        log.info("Groq: discovered \(sorted.count) models: \(sorted.joined(separator: ", "))")
+        cachedModels = sorted
+        return sorted
+    }
+    
+    // MARK: - Model Call
+    
+    private func callGroq(model: String, prompt: String, key: String) async throws -> String {
         let url = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -166,7 +350,7 @@ class GroqProvider: AIProvider {
         request.timeoutInterval = 60
         
         let body: [String: Any] = [
-            "model": "llama-3.1-8b-instant",
+            "model": model,
             "messages": [["role": "user", "content": prompt]],
             "temperature": 0.7,
             "top_p": 0.9,
@@ -184,6 +368,12 @@ class GroqProvider: AIProvider {
             switch http.statusCode {
             case 429:
                 throw ProviderError.rateLimited("Groq rate limit exceeded. Retrying with backoff...")
+            case 503:
+                throw ProviderError.rateLimited("Groq model \(model) overloaded. Trying next...")
+            case 404:
+                // Model removed — invalidate cache and try next
+                cachedModels = nil
+                throw ProviderError.rateLimited("Groq model \(model) not found. Trying next...")
             case 401, 403:
                 throw ProviderError.invalidApiKey
             default:

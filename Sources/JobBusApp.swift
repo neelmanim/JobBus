@@ -13,9 +13,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.activate(ignoringOtherApps: true)
         
         // Set app icon from bundled resource (SPM apps don't use Assets.xcassets)
-        if let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
-           let iconImage = NSImage(contentsOf: iconURL) {
-            NSApplication.shared.applicationIconImage = iconImage
+        // Check Bundle.main.resourceURL (Contents/Resources/ in packaged .app)
+        if let resourceURL = Bundle.main.resourceURL {
+            let iconURL = resourceURL.appendingPathComponent("AppIcon.png")
+            if let iconImage = NSImage(contentsOf: iconURL) {
+                NSApplication.shared.applicationIconImage = iconImage
+            }
         }
     }
     
