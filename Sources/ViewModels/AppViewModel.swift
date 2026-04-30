@@ -157,6 +157,7 @@ class AppViewModel: ObservableObject {
     func parseResume(from url: URL) async {
         guard !isLoading else { return }
         isLoading = true
+        defer { isLoading = false }
         loadingMessage = "Reading resume..."
         canRetry = false
         
@@ -177,7 +178,6 @@ class AppViewModel: ObservableObject {
             // Edge case: empty or near-empty resume
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.count >= 50 else {
-                isLoading = false
                 showErrorWithRetry("The resume appears to be empty or contains very little text (\(trimmed.count) characters).\n\nPlease check that the file is a valid PDF or DOCX with readable text content.") {
                     await self.parseResume(from: url)
                 }
@@ -223,13 +223,10 @@ class AppViewModel: ObservableObject {
                 settings.save()
             }
             
-            isLoading = false
             currentStep = .strategy
         } catch is CancellationError {
-            isLoading = false
             showError("Resume parsing was cancelled.")
         } catch let providerError as ProviderError {
-            isLoading = false
             let resumeURL = url
             switch providerError {
             case .notConfigured(let msg):
@@ -258,7 +255,6 @@ class AppViewModel: ObservableObject {
                 }
             }
         } catch {
-            isLoading = false
             let msg = error.localizedDescription
             let resumeURL = url
             if msg.contains("Could not connect") || msg.contains("Connection refused") {

@@ -1,8 +1,8 @@
 # JobBus — Development Context & Rules
 
-> **Last Updated**: 2026-04-29 (App Store Submission — Entitlements, Quarantine Fix, Transporter Upload, Screenshots)
+> **Last Updated**: 2026-04-30 (Disabled Button Fix — isLoading flag, Developer ID + Notarization packaging)
 > **Version**: 1.1.5
-> **Status**: App Store build uploaded & processed ✅ — TestFlight ready, pending App Store review submission
+> **Status**: App Store build uploaded ✅ — Direct distribution DMG signed + notarized ✅
 
 ---
 
@@ -216,7 +216,15 @@ contactCount: Int                     // Number of contacts to search for
 
 ---
 
-## 🐛 Bugs Fixed (This Session — 2026-04-29)
+## 🐛 Bugs Fixed (This Session — 2026-04-30)
+
+| ID | Bug | Fix | File |
+|---|---|---|---|
+| — | "Find Contacts" button permanently disabled on Step 2 | Removed `vm.isLoading` from disabled condition — `isLoading` gates resume parsing, not search | `Step2_StrategyView.swift` |
+| — | "Apollo Search" button disabled on Step 3 (same root cause) | Removed `vm.isLoading` from disabled condition | `Step3_ContactsView.swift` |
+| — | `isLoading` flag could get stuck `true` on edge-case error paths | Added `defer { isLoading = false }` to `parseResume()` — guarantees reset on all exit paths | `AppViewModel.swift` |
+
+### Previous Session (2026-04-29)
 
 | ID | Bug | Fix | File |
 |---|---|---|---|
@@ -415,3 +423,5 @@ brew install mailhog && mailhog  # Start MailHog
 17. **App Store screenshots**: Must be exact 2560×1600 (or 1280×800, 1440×900, 2880×1800), sRGB color space, JPEG or PNG. Generated images may have wrong color profile — always convert with `sips -m /System/Library/ColorSync/Profiles/sRGB\ Profile.icc`
 18. **Transporter for uploads**: CLI tools (`altool`, `xcrun notarytool`) can be flaky — Transporter.app (GUI) is the proven reliable method for uploading `.pkg` to App Store Connect
 19. **Privacy Policy required**: App Store submission requires a public privacy policy URL — `PRIVACY.md` in repo serves this purpose (must be on a public URL)
+20. **`isLoading` flag scope**: `isLoading` is for resume parsing (Step 1) only. Do NOT use it to gate buttons on Step 2/3 — if it gets stuck, it permanently disables search/import. Each operation has its own guard (`isSearching`, `isGenerating`). Use `defer { flag = false }` for safety.
+21. **App Store .pkg ≠ local install**: `.pkg` files signed with "3rd Party Mac Developer Installer" are for App Store Connect upload via Transporter ONLY. They cannot be installed locally — macOS Installer refuses them. Use Developer ID-signed DMG for local distribution.

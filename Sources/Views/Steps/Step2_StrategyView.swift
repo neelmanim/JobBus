@@ -170,7 +170,7 @@ struct Step2_StrategyView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Color(hex: "#8b5cf6"))
-                    .disabled(vm.isSearching || vm.isLoading)
+                    .disabled(vm.isSearching)
                     
                     if vm.isSearching {
                         Button {

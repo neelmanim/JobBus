@@ -47,7 +47,7 @@ struct Step3_ContactsView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Color(hex: "#8b5cf6"))
-                    .disabled(vm.isSearching || vm.isGenerating || vm.isLoading)
+                    .disabled(vm.isSearching || vm.isGenerating)
                     .help("Search for contacts matching your resume using the configured contact provider")
                     
                     if vm.isSearching {
