@@ -18,7 +18,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 APP_NAME="JobBus"
-BUNDLE_ID="com.jobbus.app"
+BUNDLE_ID="com.neelmani.jobbus"
 BUILD_DIR=".build/release"
 OUTPUT_DIR="dist"
 VERSION_FILE="VERSION"
@@ -168,107 +168,52 @@ if command -v iconutil &> /dev/null && [ -f "Sources/Resources/AppIcon.png" ]; t
     echo "   ✅ .icns icon generated"
 fi
 
-# ── Step 8: Ad-hoc code sign ───────────────────────────────
-# Without ANY signature, macOS shows "damaged and can't be opened" (dead end).
-# Ad-hoc signing changes this to "unidentified developer", which allows
-# right-click → Open. This is FREE and doesn't need an Apple Developer cert.
+# ── Signing & Notarization Config ──────────────────────────
+SIGNING_IDENTITY="Developer ID Application: Viren Baid (TS6UH83Q2Q)"
+TEAM_ID="TS6UH83Q2Q"
+ENTITLEMENTS="$PROJECT_ROOT/Sources/Resources/JobBus.entitlements"
 
-echo "🔏 Ad-hoc code signing..."
-codesign --force --deep --sign - "$OUTPUT_DIR/$APP_NAME.app" 2>/dev/null
+# ── Step 8: Developer ID code sign ─────────────────────────
+
+echo "🔏 Code signing with Developer ID..."
+codesign --force --deep --options runtime \
+    --sign "$SIGNING_IDENTITY" \
+    --entitlements "$ENTITLEMENTS" \
+    --timestamp \
+    "$OUTPUT_DIR/$APP_NAME.app"
+
+# Verify signature
+codesign --verify --verbose=2 "$OUTPUT_DIR/$APP_NAME.app" 2>&1
 if [ $? -eq 0 ]; then
-    echo "   ✅ Ad-hoc signed (enables right-click → Open on other Macs)"
+    echo "   ✅ Code signed with Developer ID (Viren Baid)"
 else
-    echo "   ⚠️  Code signing failed — app may show 'damaged' on other Macs"
+    echo "   ❌ Code signing verification failed!"
+    exit 1
 fi
 
-# ── Step 9: Strip quarantine ───────────────────────────────
-
-echo "🔓 Stripping quarantine attributes..."
-xattr -cr "$OUTPUT_DIR/$APP_NAME.app" 2>/dev/null || true
-echo "   ✅ Quarantine stripped"
-
-# ── Step 9: Create .zip with installer ─────────────────────
-
-ZIP_NAME="${APP_NAME}-v${VERSION}-macOS.zip"
-echo "📦 Creating distributable archive..."
-
-# Copy the double-click installer alongside the app
-INSTALLER_SRC="$PROJECT_ROOT/scripts/Install JobBus.command"
-if [ -f "$INSTALLER_SRC" ]; then
-    cp "$INSTALLER_SRC" "$OUTPUT_DIR/"
-    chmod +x "$OUTPUT_DIR/Install JobBus.command"
-    xattr -cr "$OUTPUT_DIR/Install JobBus.command" 2>/dev/null || true
-fi
-
-cd "$OUTPUT_DIR"
-zip -r -q "$ZIP_NAME" "$APP_NAME.app" "Install JobBus.command" 2>/dev/null || \
-zip -r -q "$ZIP_NAME" "$APP_NAME.app"
-cd "$PROJECT_ROOT"
-echo "   ✅ Zip created (with installer)"
-
-# ── Step 10: Create DMG ───────────────────────────────────
+# ── Step 9: Create DMG ────────────────────────────────────
 
 DMG_NAME="${APP_NAME}-v${VERSION}-macOS.dmg"
 echo "💿 Creating DMG installer..."
 
-# Create a temporary folder for DMG contents
 DMG_STAGING="$OUTPUT_DIR/dmg_staging"
 rm -rf "$DMG_STAGING"
 mkdir -p "$DMG_STAGING"
 
-# Copy app and installer
+# Copy app
 cp -R "$OUTPUT_DIR/$APP_NAME.app" "$DMG_STAGING/"
-if [ -f "$OUTPUT_DIR/Install JobBus.command" ]; then
-    cp "$OUTPUT_DIR/Install JobBus.command" "$DMG_STAGING/"
-fi
 
 # Create Applications symlink for drag-to-install
 ln -s /Applications "$DMG_STAGING/Applications"
 
-# Create a README for the DMG
+# Create install instructions
 cat > "$DMG_STAGING/How to Install.txt" << 'INSTALL_README'
 
    🚌  JobBus — Installation Guide
 
-
-   STEP 1:  Install the App
-   ─────────────────────────────────────
-   Drag "JobBus" into the "Applications" folder
-   in this window.
-
-
-   STEP 2:  First Launch (IMPORTANT!)
-   ─────────────────────────────────────
-   Since this app isn't from the App Store,
-   macOS blocks it by default. To open it:
-
-   1. Open your Applications folder
-   2. Find "JobBus"
-   3. RIGHT-CLICK (or Control+click) on it
-   4. Click "Open" from the menu
-   5. Click "Open" again in the popup
-
-   ✅ You only need to do this ONCE.
-      After that, JobBus opens normally.
-
-
-   ALTERNATIVE: Use the Installer Script
-   ─────────────────────────────────────
-   If the above doesn't work:
-   1. RIGHT-CLICK "Install JobBus.command"
-   2. Click "Open" → then "Open" again
-   3. It will install everything automatically
-
-
-   STILL STUCK? ("damaged" error)
-   ─────────────────────────────────────
-   1. Open Spotlight (Cmd + Space)
-   2. Type "Terminal" and press Enter
-   3. Paste this and press Enter:
-
-      xattr -cr /Applications/JobBus.app
-
-   4. Now open JobBus normally
+   Drag "JobBus" into the "Applications" folder.
+   That's it! The app is signed and notarized — 
+   it will open without any warnings.
 
 INSTALL_README
 
@@ -281,14 +226,43 @@ hdiutil create -volname "JobBus v${VERSION}" \
 if [ $? -eq 0 ]; then
     echo "   ✅ DMG created"
 else
-    echo "   ⚠️  DMG creation failed (zip is still available)"
+    echo "   ❌ DMG creation failed!"
+    exit 1
 fi
 
-# Cleanup
 rm -rf "$DMG_STAGING"
-rm -f "$OUTPUT_DIR/Install JobBus.command"  # Already in zip/dmg
 
-# ── Step 11: Write build manifest ──────────────────────────
+# ── Step 10: Notarize ─────────────────────────────────────
+
+echo "📤 Submitting for Apple Notarization (this takes 2-5 min)..."
+xcrun notarytool submit "$OUTPUT_DIR/$DMG_NAME" \
+    --keychain-profile "JobBus-Notarize" \
+    --wait
+
+if [ $? -eq 0 ]; then
+    echo "   ✅ Notarization successful!"
+else
+    echo "   ❌ Notarization failed. Check logs with:"
+    echo "      xcrun notarytool log <submission-id> --keychain-profile JobBus-Notarize"
+    exit 1
+fi
+
+# ── Step 11: Staple ticket ─────────────────────────────────
+
+echo "📎 Stapling notarization ticket to DMG..."
+xcrun stapler staple "$OUTPUT_DIR/$DMG_NAME"
+echo "   ✅ Notarization ticket stapled!"
+
+# ── Step 12: Also create .zip (for direct sharing) ────────
+
+ZIP_NAME="${APP_NAME}-v${VERSION}-macOS.zip"
+echo "📦 Creating zip archive..."
+cd "$OUTPUT_DIR"
+zip -r -q "$ZIP_NAME" "$APP_NAME.app"
+cd "$PROJECT_ROOT"
+echo "   ✅ Zip created"
+
+# ── Step 13: Write build manifest ──────────────────────────
 
 cat > "$OUTPUT_DIR/BUILD_INFO.txt" << EOF
 JobBus Build Manifest
@@ -300,6 +274,8 @@ Machine:      $(hostname)
 Swift:        $(swift --version 2>&1 | head -1)
 macOS:        $(sw_vers -productVersion)
 Arch:         $(uname -m)
+Signed:       Developer ID Application: Viren Baid ($TEAM_ID)
+Notarized:    Yes
 EOF
 echo "   ✅ Build manifest written"
 
@@ -307,27 +283,21 @@ echo "   ✅ Build manifest written"
 
 BINARY_SIZE=$(du -sh "$OUTPUT_DIR/$APP_NAME.app/Contents/MacOS/$APP_NAME" | cut -f1)
 ZIP_SIZE=$(du -sh "$OUTPUT_DIR/$ZIP_NAME" | cut -f1)
-DMG_SIZE=""
-if [ -f "$OUTPUT_DIR/$DMG_NAME" ]; then
-    DMG_SIZE=$(du -sh "$OUTPUT_DIR/$DMG_NAME" | cut -f1)
-fi
+DMG_SIZE=$(du -sh "$OUTPUT_DIR/$DMG_NAME" | cut -f1)
 
 echo ""
 echo "══════════════════════════════════════"
-echo "✅ Package complete!"
+echo "✅ Package complete — SIGNED & NOTARIZED!"
 echo ""
 echo "  Version:    $FULL_VERSION"
+echo "  Signed by:  Viren Baid ($TEAM_ID)"
 echo "  App Bundle: $OUTPUT_DIR/$APP_NAME.app"
-echo "  Archive:    $OUTPUT_DIR/$ZIP_NAME ($ZIP_SIZE)"
-if [ -n "$DMG_SIZE" ]; then
 echo "  DMG:        $OUTPUT_DIR/$DMG_NAME ($DMG_SIZE)"
-fi
+echo "  Archive:    $OUTPUT_DIR/$ZIP_NAME ($ZIP_SIZE)"
 echo "  Binary:     $BINARY_SIZE"
 echo ""
-echo "📤 Share with users:"
-echo "  • For techies:     $ZIP_NAME"
-echo "  • For everyone:    $DMG_NAME (drag to Applications)"
-echo "  • Both include 'Install JobBus.command' (double-click installer)"
+echo "📤 Share the DMG — users can install with zero friction!"
+echo "   No right-click needed, no xattr workaround."
 echo ""
 echo "To tag this release:"
 echo "  git tag v$VERSION && git push origin v$VERSION"

@@ -1,8 +1,8 @@
 # JobBus — Development Context & Rules
 
-> **Last Updated**: 2026-04-27 (Deployment Stability — Dynamic Models, Versioning, Code Signing, Logs UI)
-> **Version**: 1.1.4
-> **Status**: Production-ready, ad-hoc signed, DMG + ZIP distribution
+> **Last Updated**: 2026-04-29 (App Store Submission — Entitlements, Quarantine Fix, Transporter Upload, Screenshots)
+> **Version**: 1.1.5
+> **Status**: App Store build uploaded & processed ✅ — TestFlight ready, pending App Store review submission
 
 ---
 
@@ -88,9 +88,13 @@ JobBus/
 ├── scripts/
 │   ├── package.sh                   # Build → sign → .app + .zip + .dmg packaging
 │   └── Install JobBus.command       # Double-click installer for end users
-├── dist/                            # Generated .app, .zip, .dmg (gitignored)
+├── dist/                            # Generated .app, .zip, .dmg, .pkg (gitignored)
+│   ├── appstore/                    # App Store .pkg builds
+│   ├── screenshots/                 # App Store screenshots (2560x1600)
+│   └── screenshots_clean/           # sRGB JPEG screenshots for upload
 ├── README.md                        # User-facing docs
 ├── INSTALL.md                       # Installation guide for other systems
+├── PRIVACY.md                       # Privacy policy (required for App Store)
 ├── LICENSE                          # MIT
 └── RULES.md                         # THIS FILE — development context
 ```
@@ -212,7 +216,16 @@ contactCount: Int                     // Number of contacts to search for
 
 ---
 
-## 🐛 Bugs Fixed (This Session — 2026-04-27)
+## 🐛 Bugs Fixed (This Session — 2026-04-29)
+
+| ID | Bug | Fix | File |
+|---|---|---|---|
+| 90886 | Missing application identifier in bundle signature | Added `com.apple.application-identifier` and `com.apple.developer.team-identifier` to entitlements | `AppStore.entitlements` |
+| 91109 | `com.apple.quarantine` xattr in .pkg rejected by App Store | `xattr -cr` + `ditto --norsrc` to strip all extended attributes before packaging | Packaging pipeline |
+| — | Build version collision in App Store Connect | Bumped version to 1.1.5 (Build 1) for distinct identification | `VERSION` |
+| — | Screenshots rejected by App Store Connect | Converted to sRGB JPEG at exact 2560×1600 dimensions | `dist/screenshots_clean/` |
+
+### Previous Session (2026-04-27)
 
 | ID | Bug | Fix | File |
 |---|---|---|---|
@@ -259,28 +272,53 @@ contactCount: Int                     // Number of contacts to search for
 - Build number: `{git_commit_count}.{short_hash}` (e.g., `26.da9610c`)
 - Both stamped into `Info.plist` (`CFBundleShortVersionString` + `CFBundleVersion`)
 
-### Build Pipeline (`scripts/package.sh`)
+### Distribution Channels
+
+#### 1. App Store (Primary — v1.1.5+)
+- **Status**: Build v1.1.5 (1) uploaded & processed ✅ on App Store Connect
+- **TestFlight**: Build is Complete, ready for internal testing groups
+- **Signing**: `3rd Party Mac Developer Application: Viren Baid (TS6UH83Q2Q)`
+- **Installer Signing**: `3rd Party Mac Developer Installer: Viren Baid (TS6UH83Q2Q)`
+- **Bundle ID**: `com.neelmani.jobbus`
+- **Team ID**: `TS6UH83Q2Q`
+- **Provisioning Profile**: Embedded at `Contents/embedded.provisionprofile`
+- **Entitlements**: `Sources/Resources/AppStore.entitlements`
+- **Upload Tool**: Transporter (GUI) — proven stable for `.pkg` delivery
+
+#### App Store Build Pipeline
 ```
-Build → .app bundle → copy resources to Contents/Resources/ → Info.plist
-→ .icns icon → ad-hoc codesign → strip quarantine
-→ .zip (with Install.command) → .dmg (with Applications symlink)
-→ BUILD_INFO.txt manifest
+swift build -c release
+→ ditto --norsrc (strip xattrs) → clean .app bundle
+→ codesign inner binary with entitlements (3rd Party Mac Developer Application)
+→ codesign outer .app bundle with entitlements
+→ embed provisioning profile
+→ xattr -cr (strip ALL quarantine/provenance attributes)
+→ productbuild --sign (3rd Party Mac Developer Installer) → .pkg
+→ Upload via Transporter
 ```
 
-### Output
+#### AppStore.entitlements (Sources/Resources/AppStore.entitlements)
+```xml
+<key>com.apple.security.app-sandbox</key> <true/>
+<key>com.apple.security.network.client</key> <true/>
+<key>com.apple.security.files.user-selected.read-only</key> <true/>
+<key>com.apple.application-identifier</key> <string>TS6UH83Q2Q.com.neelmani.jobbus</string>
+<key>com.apple.developer.team-identifier</key> <string>TS6UH83Q2Q</string>
+```
+
+#### 2. Direct Distribution (Ad-hoc)
 ```bash
-# Build + package:
 ./scripts/package.sh              # Same version
 ./scripts/package.sh --bump       # Increment patch version
 
 # Output (dist/):
 # dist/JobBus.app                     ← App bundle (ad-hoc signed)
-# dist/JobBus-v1.1.4-macOS.zip       ← For techies (includes Install.command)
-# dist/JobBus-v1.1.4-macOS.dmg       ← For everyone (drag to Applications)
+# dist/JobBus-v1.1.5-macOS.zip       ← For techies (includes Install.command)
+# dist/JobBus-v1.1.5-macOS.dmg       ← For everyone (drag to Applications)
 # dist/BUILD_INFO.txt                ← Build metadata manifest
 ```
 
-### Installation (for end users)
+### Installation (direct distribution)
 **DMG (recommended):** Open DMG → drag JobBus to Applications → right-click → Open
 
 **If "damaged" error appears:**
@@ -290,17 +328,25 @@ xattr -cr /Applications/JobBus.app && open /Applications/JobBus.app
 
 **Or:** System Settings → Privacy & Security → "Open Anyway"
 
-### Signing Status
-- **Current**: Ad-hoc signed (`codesign --sign -`) — enables right-click → Open on most Macs
-- **Limitation**: macOS 26+ may still show "damaged" for ad-hoc signed apps downloaded from internet
-- **Fix**: Apple Developer certificate ($99/year) + notarization eliminates all Gatekeeper warnings
+### App Store Submission Collaterals
+- **Screenshots**: 5 promotional images at 2560×1600 (sRGB JPEG) in `dist/screenshots_clean/`
+- **Privacy Policy**: `PRIVACY.md` in repo root (URL: `https://github.com/neelmanim/JobBus/blob/main/PRIVACY.md`)
+- **Support URL**: `https://github.com/neelmanim/JobBus`
+- **Category**: Productivity / Business
+- **Price**: Free
+- **App Review Notes**: Explains API key requirements, sandbox mode, no demo credentials needed
 
 ---
 
 ## 🚀 What's Next (Potential Improvements)
 
+### Immediate (App Store)
+- [ ] **Complete App Store submission** — fill metadata, upload screenshots, submit for review
+- [ ] **TestFlight internal testing** — create test group, add testers, validate on real devices
+- [ ] **App Store Review prep** — ensure sandbox mode and API key flow pass review guidelines
+
 ### High Priority
-- [ ] **Apple Developer certificate** — proper code signing + notarization ($99/year) to eliminate install friction
+- [x] ~~**Apple Developer certificate** — proper code signing + notarization~~ ✅ Done (signed with 3rd Party Mac Developer certs)
 - [ ] **Unit test expansion** — 58 tests exist but need coverage for new features (onboarding, SMTP validation)
 
 ### Medium Priority
@@ -312,7 +358,7 @@ xattr -cr /Applications/JobBus.app && open /Applications/JobBus.app
 
 ### Low Priority
 - [ ] **Dark mode polish** — verify all views look good in dark mode
-- [ ] **Auto-update** — Sparkle framework for in-app updates
+- [ ] **Auto-update** — Sparkle framework for in-app updates (not needed if on App Store)
 - [ ] **Export** — export sent emails / contacts to CSV
 - [ ] **Multi-resume** — support different resumes for different job types
 
@@ -363,3 +409,9 @@ brew install mailhog && mailhog  # Start MailHog
 11. **Code signing**: Ad-hoc signing (`codesign --sign -`) requires all content inside `Contents/`. SPM resource bundles MUST go in `Contents/Resources/`, NOT the app root — otherwise `codesign` fails with "unsealed contents"
 12. **Dynamic model discovery**: Gemini/Groq model lists fetched at runtime; if API is down, hardcoded fallback models are used. Never assume a model name is permanent.
 13. **Provider rename migration**: Changing `AIProviderType` raw values requires a custom `init(from: Decoder)` to migrate existing user settings — otherwise `Decodable` crashes
+14. **App Store entitlements**: `AppStore.entitlements` MUST include `com.apple.application-identifier` (format: `TEAMID.BUNDLEID`) and `com.apple.developer.team-identifier` — without these, TestFlight rejects with error 90886
+15. **Quarantine xattrs in .pkg**: macOS adds `com.apple.quarantine` and `com.apple.provenance` to downloaded/created files. These MUST be stripped via `xattr -cr` or `ditto --norsrc` before packaging — App Store rejects with error 91109
+16. **macOS Sequoia provenance**: `com.apple.provenance` xattr is re-added automatically by the OS on every file operation. Use `ditto --norsrc` for copy operations to avoid re-introduction
+17. **App Store screenshots**: Must be exact 2560×1600 (or 1280×800, 1440×900, 2880×1800), sRGB color space, JPEG or PNG. Generated images may have wrong color profile — always convert with `sips -m /System/Library/ColorSync/Profiles/sRGB\ Profile.icc`
+18. **Transporter for uploads**: CLI tools (`altool`, `xcrun notarytool`) can be flaky — Transporter.app (GUI) is the proven reliable method for uploading `.pkg` to App Store Connect
+19. **Privacy Policy required**: App Store submission requires a public privacy policy URL — `PRIVACY.md` in repo serves this purpose (must be on a public URL)
