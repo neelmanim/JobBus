@@ -1,0 +1,105 @@
+.settings-page { max-width: 800px; }
+
+.settings-section {
+  margin-bottom: var(--space-6);
+}
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--space-5);
+}
+.section-header h3 {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  transition: all var(--transition-fast);
+}
+.mode-toggle:hover {
+  background: var(--bg-hover);
+}
+.toggle-on {
+  color: var(--brand-primary);
+}
+
+/* ── SMTP ──────────────────────────────────────────────── */
+.smtp-connected {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.smtp-info {
+  display: flex;
+  gap: var(--space-6);
+}
+.smtp-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.test-email-group {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.smtp-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+.password-input {
+  position: relative;
+}
+.password-toggle {
+  position: absolute;
+  right: 10px; top: 50%; transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 4px;
+}
+.smtp-form-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+}
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+@media (max-width: 640px) {
+  .form-grid { grid-template-columns: 1fr; }
+  .section-header { flex-direction: column; gap: var(--space-3); }
+}
