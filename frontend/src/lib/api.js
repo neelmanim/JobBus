@@ -72,7 +72,7 @@ class ApiClient {
   validateInvite(code) { return this.post('/api/auth/invite/validate', { code }); }
   createInvite(data) { return this.post('/api/auth/invite/create', data); }
   listInvites() { return this.get('/api/auth/invite/list'); }
-  register(data) { return this.post('/api/auth/register', data); }
+  register(inviteCode) { return this.post(`/api/auth/register?invite_code=${encodeURIComponent(inviteCode)}`); }
   getProfile() { return this.get('/api/auth/me'); }
   updateMode(mode) { return this.put('/api/auth/me/mode', { mode }); }
   completeOnboarding(data) { return this.post('/api/auth/me/onboarding', data); }

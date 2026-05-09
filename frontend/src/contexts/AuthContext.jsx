@@ -20,7 +20,6 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     if (isDemoMode) {
-      // In demo mode, auto-authenticate
       setSession({ user: { email: 'demo@jobbus.dev' } });
       setProfile(DEMO_PROFILE);
       setLoading(false);
@@ -31,7 +30,7 @@ export function AuthProvider({ children }) {
       setSession(s);
       if (s?.access_token) {
         api.setToken(s.access_token);
-        loadProfile();
+        loadOrCreateProfile(s);
       } else {
         setLoading(false);
       }
@@ -39,11 +38,12 @@ export function AuthProvider({ children }) {
       setLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
       if (s?.access_token) {
         api.setToken(s.access_token);
-        loadProfile();
+        // On SIGNED_IN event (fresh login), try to load or create profile
+        loadOrCreateProfile(s);
       } else {
         api.setToken(null);
         setProfile(null);
@@ -54,12 +54,39 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  async function loadOrCreateProfile(currentSession) {
+    try {
+      const p = await api.getProfile();
+      setProfile(p);
+    } catch (e) {
+      if (e.status === 404) {
+        // New user — auto-register with saved invite code
+        const savedInvite = localStorage.getItem('jobbus_invite_code');
+        if (savedInvite) {
+          try {
+            const newProfile = await api.register(savedInvite);
+            setProfile(newProfile);
+            // Don't clear invite code — keep for reference
+          } catch (regErr) {
+            console.error('Auto-registration failed:', regErr);
+            setProfile(null);
+          }
+        } else {
+          setProfile(null);
+        }
+      } else {
+        console.error('Profile load error:', e);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function loadProfile() {
     try {
       const p = await api.getProfile();
       setProfile(p);
     } catch (e) {
-      // Profile might not exist yet (new user)
       if (e.status === 404) setProfile(null);
       else console.error('Profile load error:', e);
     } finally {
@@ -81,11 +108,19 @@ export function AuthProvider({ children }) {
   }
 
   async function signOut() {
-    if (!isDemoMode) {
-      await supabase.auth.signOut();
+    try {
+      if (!isDemoMode) {
+        await supabase.auth.signOut();
+      }
+    } catch (err) {
+      console.error('Sign out error:', err);
+    } finally {
+      // Always clear state, even if Supabase call fails
+      api.setToken(null);
+      setProfile(null);
+      setSession(null);
+      localStorage.removeItem('jobbus_invite_code');
     }
-    setProfile(null);
-    setSession(null);
   }
 
   const value = {
