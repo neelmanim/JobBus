@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from middleware.auth_middleware import get_current_user, require_admin
+from middleware.auth_middleware import get_current_user, get_jwt_user, require_admin
 from services.auth_service import InviteService, UserService
 from models.schemas import (
     InviteCodeCreate, InviteCodeResponse, InviteValidationResult,
@@ -49,7 +49,7 @@ async def list_invites(user: dict = Depends(require_admin)):
 @router.post("/register", response_model=UserProfileResponse)
 async def register_user(
     invite_code: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_jwt_user),
 ):
     """Register after SSO login with an invite code."""
     # Validate invite

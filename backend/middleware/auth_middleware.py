@@ -137,7 +137,60 @@ async def get_current_user(request: Request) -> dict:
     }
 
 
+async def get_jwt_user(request: Request) -> dict:
+    """Validate JWT and return basic user info — does NOT require a profile.
+
+    Use this for endpoints that must work before a profile exists (e.g. /register).
+    Returns: {"user_id": str, "email": str}
+    """
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid Authorization header",
+        )
+
+    token = auth_header.split(" ", 1)[1]
+    settings = get_settings()
+
+    payload = None
+    last_error = "Unknown error"
+
+    jwks_keys = _get_supabase_jwks(settings.supabase_url)
+    for jwk_key in jwks_keys:
+        try:
+            payload = jwt.decode(token, jwk_key, algorithms=["ES256", "RS256"], audience="authenticated")
+            break
+        except ExpiredSignatureError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired")
+        except JWTError as e:
+            last_error = str(e)
+
+    if payload is None and settings.jwt_secret:
+        try:
+            payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"], audience="authenticated")
+        except ExpiredSignatureError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired")
+        except JWTError as e:
+            last_error = str(e)
+
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid token: {last_error}")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing user ID")
+
+    return {
+        "user_id": user_id,
+        "email": payload.get("email", ""),
+        "display_name": payload.get("user_metadata", {}).get("full_name", ""),
+        "avatar_url": payload.get("user_metadata", {}).get("avatar_url", ""),
+    }
+
+
 async def require_admin(request: Request) -> dict:
+
     """Require the current user to be an admin.
     
     Returns the user dict if admin, raises 403 otherwise.
