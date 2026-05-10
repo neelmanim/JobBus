@@ -3,16 +3,37 @@ JobBus Backend — Auth Middleware.
 
 Verifies Supabase JWT tokens and injects the authenticated user
 into FastAPI request state.
+
+Supports both:
+  - ES256 (Supabase v2+, public key via JWKS)
+  - HS256 (legacy, shared JWT secret)
 """
 
 from __future__ import annotations
 
-
+import httpx
 from fastapi import Request, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError, ExpiredSignatureError
 from config import get_settings
 from database import get_supabase_admin
+
+
+# Cache JWKS keys to avoid fetching on every request
+_jwks_cache: dict = {}
+
+
+def _get_supabase_jwks(supabase_url: str) -> list:
+    """Fetch Supabase JWKS public keys (cached)."""
+    global _jwks_cache
+    if supabase_url not in _jwks_cache:
+        try:
+            resp = httpx.get(f"{supabase_url}/auth/v1/.well-known/jwks.json", timeout=5)
+            resp.raise_for_status()
+            _jwks_cache[supabase_url] = resp.json().get("keys", [])
+        except Exception:
+            _jwks_cache[supabase_url] = []
+    return _jwks_cache[supabase_url]
 
 
 security = HTTPBearer()
@@ -38,22 +59,50 @@ async def get_current_user(request: Request) -> dict:
     token = auth_header.split(" ", 1)[1]
     settings = get_settings()
 
-    try:
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm],
-            audience="authenticated",
-        )
-    except ExpiredSignatureError:
+    payload = None
+    last_error = "Unknown error"
+
+    # 1) Try ES256 via Supabase JWKS (Supabase v2+)
+    jwks_keys = _get_supabase_jwks(settings.supabase_url)
+    for jwk_key in jwks_keys:
+        try:
+            payload = jwt.decode(
+                token,
+                jwk_key,
+                algorithms=["ES256", "RS256"],
+                audience="authenticated",
+            )
+            break  # Success
+        except ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has expired",
+            )
+        except JWTError as e:
+            last_error = str(e)
+            continue
+
+    # 2) Fall back to HS256 with shared JWT secret (legacy)
+    if payload is None and settings.jwt_secret:
+        try:
+            payload = jwt.decode(
+                token,
+                settings.jwt_secret,
+                algorithms=["HS256"],
+                audience="authenticated",
+            )
+        except ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has expired",
+            )
+        except JWTError as e:
+            last_error = str(e)
+
+    if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired",
-        )
-    except JWTError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {str(e)}",
+            detail=f"Invalid token: {last_error}",
         )
 
     user_id = payload.get("sub")
