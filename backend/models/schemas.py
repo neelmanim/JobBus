@@ -62,8 +62,11 @@ class UserModeUpdate(BaseModel):
 
 
 class OnboardingComplete(BaseModel):
-    """Request to complete onboarding."""
-    gemini_api_key: str = Field(..., min_length=10, description="User's Gemini API key")
+    """
+    Legacy minimal onboarding schema (kept for backward compatibility).
+    The comprehensive wizard uses OnboardingCompleteRequest in routers/auth.py.
+    """
+    gemini_api_key: str = Field("", description="Gemini API key (optional in new flow)")
     mode: UserMode = UserMode.BEGINNER
 
 

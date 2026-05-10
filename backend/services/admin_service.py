@@ -1,19 +1,28 @@
 """
 JobBus Backend — Admin Service.
 
-Admin-only operations: user management, activity monitoring, and invite management.
+Admin-only operations: user management, system config, and usage analytics.
 """
 
 from __future__ import annotations
 
-
-from typing import Optional
+import logging
+from typing import Any, Optional
 from database import get_supabase_admin
 from models.schemas import AdminUserListItem, AdminUserActivity
 
+logger = logging.getLogger(__name__)
+
+# Keys that contain secrets — mask in GET responses
+_SECRET_KEYS = {"system_groq_key", "system_hunter_key"}
+
 
 class AdminService:
-    """Admin operations — user management and monitoring."""
+    """Admin operations — user management, config, and monitoring."""
+
+    # ─────────────────────────────────────────────────────────
+    # User management
+    # ─────────────────────────────────────────────────────────
 
     @staticmethod
     def list_users() -> list[AdminUserListItem]:
@@ -23,7 +32,6 @@ class AdminService:
 
         users = []
         for row in result.data:
-            # Get campaign stats for each user
             stats = AdminService._get_user_stats(row["user_id"])
             users.append(AdminUserListItem(
                 user_id=row["user_id"],
@@ -101,14 +109,12 @@ class AdminService:
                 ).in_("campaign_id", campaign_ids).execute()
 
                 for contact in (contacts.data or []):
-                    if contact["status"] == "sent":
+                    s = contact["status"]
+                    if s in ("sent", "replied", "interview"):
                         total_sent += 1
-                    elif contact["status"] == "replied":
-                        total_sent += 1
+                    if s in ("replied", "interview"):
                         total_replies += 1
-                    elif contact["status"] == "interview":
-                        total_sent += 1
-                        total_replies += 1
+                    if s == "interview":
                         total_interviews += 1
 
             return {
@@ -119,6 +125,143 @@ class AdminService:
                 "active_campaigns": active_campaigns,
             }
         except Exception:
-            # Tables may not exist yet during early setup
             return {"campaigns_count": 0, "total_sent": 0, "total_replies": 0,
                     "total_interviews": 0, "active_campaigns": 0}
+
+    # ─────────────────────────────────────────────────────────
+    # System config  (system_config table: key / value rows)
+    # ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def get_system_config(mask_secrets: bool = True) -> dict[str, str]:
+        """
+        Read all rows from system_config and return as a flat dict.
+        Secret keys are masked if mask_secrets=True.
+        """
+        supabase = get_supabase_admin()
+        try:
+            rows = supabase.table("system_config").select("key, value").execute()
+            config: dict[str, str] = {}
+            for row in (rows.data or []):
+                k = row["key"]
+                v = row.get("value", "")
+                if mask_secrets and k in _SECRET_KEYS and v:
+                    # Show first 8 chars then *** so admins can tell a key is set
+                    config[k] = v[:8] + "***" if len(v) > 8 else "***"
+                else:
+                    config[k] = v
+            return config
+        except Exception as exc:
+            logger.error("get_system_config error: %s", exc)
+            return {}
+
+    @staticmethod
+    def save_system_config(updates: dict[str, str]) -> None:
+        """
+        Upsert key/value pairs into system_config.
+        Each key is a separate row (key, value schema).
+        """
+        supabase = get_supabase_admin()
+        rows = [{"key": k, "value": v} for k, v in updates.items() if v is not None]
+        if not rows:
+            return
+        try:
+            supabase.table("system_config").upsert(rows, on_conflict="key").execute()
+        except Exception as exc:
+            logger.error("save_system_config error: %s", exc)
+            raise
+
+    # ─────────────────────────────────────────────────────────
+    # Platform usage analytics
+    # ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def get_platform_usage() -> dict[str, Any]:
+        """
+        Aggregate platform-wide stats:
+        - total users, campaigns, emails sent, contacts
+        - overall reply rate
+        - top 10 users leaderboard by emails sent
+        """
+        supabase = get_supabase_admin()
+
+        total_users = 0
+        total_campaigns = 0
+        total_contacts = 0
+        total_sent = 0
+        total_replies = 0
+        top_users: list[dict] = []
+
+        try:
+            # Users
+            users_res = supabase.table("user_profiles").select("user_id, display_name, email").execute()
+            all_users = users_res.data or []
+            total_users = len(all_users)
+
+            # Campaigns
+            campaigns_res = supabase.table("campaigns").select("id, user_id, status").execute()
+            all_campaigns = campaigns_res.data or []
+            total_campaigns = len(all_campaigns)
+            campaign_ids = [c["id"] for c in all_campaigns]
+
+            # Contact / email stats
+            if campaign_ids:
+                contacts_res = supabase.table("campaign_contacts").select(
+                    "campaign_id, status"
+                ).in_("campaign_id", campaign_ids).execute()
+
+                user_campaign_map: dict[str, str] = {c["id"]: c["user_id"] for c in all_campaigns}
+                user_stats: dict[str, dict] = {}
+
+                for cc in (contacts_res.data or []):
+                    total_contacts += 1
+                    uid = user_campaign_map.get(cc["campaign_id"], "unknown")
+                    if uid not in user_stats:
+                        user_stats[uid] = {"sent": 0, "replies": 0, "campaigns": 0}
+                    s = cc["status"]
+                    if s in ("sent", "replied", "interview"):
+                        total_sent += 1
+                        user_stats[uid]["sent"] += 1
+                    if s in ("replied", "interview"):
+                        total_replies += 1
+                        user_stats[uid]["replies"] += 1
+
+                # Campaign counts per user
+                for c in all_campaigns:
+                    uid = c["user_id"]
+                    if uid not in user_stats:
+                        user_stats[uid] = {"sent": 0, "replies": 0, "campaigns": 0}
+                    user_stats[uid]["campaigns"] += 1
+
+                # Build leaderboard
+                user_lookup = {u["user_id"]: u for u in all_users}
+                top_users = sorted(
+                    [
+                        {
+                            "user_id": uid,
+                            "display_name": user_lookup.get(uid, {}).get("display_name", "Unknown"),
+                            "email": user_lookup.get(uid, {}).get("email", ""),
+                            "emails_sent": s["sent"],
+                            "replies": s["replies"],
+                            "campaigns": s["campaigns"],
+                        }
+                        for uid, s in user_stats.items()
+                        if uid in user_lookup
+                    ],
+                    key=lambda x: x["emails_sent"],
+                    reverse=True,
+                )[:10]
+
+        except Exception as exc:
+            logger.error("get_platform_usage error: %s", exc)
+
+        reply_rate = round(total_replies / total_sent * 100, 1) if total_sent > 0 else None
+
+        return {
+            "total_users": total_users,
+            "total_campaigns": total_campaigns,
+            "total_emails_sent": total_sent,
+            "total_contacts": total_contacts,
+            "reply_rate": reply_rate,
+            "top_users": top_users,
+        }

@@ -72,3 +72,39 @@ async def get_my_resume(user: dict = Depends(get_current_user)):
     if not profile:
         raise HTTPException(status_code=404, detail="No resume uploaded yet")
     return profile
+
+
+@router.post("/text", response_model=ResumeProfile)
+async def save_resume_text(
+    payload: dict,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Accept raw resume text (paste from clipboard / onboarding wizard).
+    Stores as a plain-text profile row — AI parsing happens on next upload.
+    """
+    text = (payload.get("text") or "").strip()
+    if len(text) < 50:
+        raise HTTPException(status_code=400, detail="Resume text too short (min 50 characters)")
+
+    supabase = get_supabase_admin()
+    row = {
+        "user_id": user["user_id"],
+        "raw_text": text,
+        "name": user.get("display_name", ""),
+        "role": "",
+        "skills": [],
+        "achievements": [],
+        "email_context": f"Resume text provided by user ({len(text)} chars)",
+        "file_path": None,
+    }
+    result = supabase.table("user_resume_profiles").upsert(row).execute()
+    saved = result.data[0] if result.data else row
+    return ResumeProfile(
+        id=saved.get("id"),
+        name=saved.get("name", ""),
+        role=saved.get("role", ""),
+        skills=saved.get("skills") or [],
+        achievements=saved.get("achievements") or [],
+        email_context=saved.get("email_context", ""),
+    )
