@@ -26,13 +26,18 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if cfg.environment != "production" else None,
     )
 
-    # CORS — allow frontend origins
+    # CORS — allow frontend origins (supports comma-separated FRONTEND_URLS)
     origins = [
         "http://localhost:5173",    # Vite dev
         "http://localhost:3000",    # Next.js dev
+        "https://jobbus-frontend.vercel.app",
+        "https://jobbus.neelmanimishra.com",
     ]
     if cfg.frontend_url:
-        origins.append(cfg.frontend_url)
+        for url in cfg.frontend_url.split(","):
+            url = url.strip()
+            if url and url not in origins:
+                origins.append(url)
 
     app.add_middleware(
         CORSMiddleware,
