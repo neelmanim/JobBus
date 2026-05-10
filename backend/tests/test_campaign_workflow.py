@@ -1,0 +1,271 @@
+"""
+JobBus — Tests: Campaign Workflow.
+
+Tests draft generation, approval, sandbox safety gate, send guard, outcomes.
+"""
+from __future__ import annotations
+import pytest
+from unittest.mock import patch, AsyncMock, MagicMock
+from fastapi.testclient import TestClient
+
+
+def _make_app():
+    from main import create_app
+    return create_app()
+
+
+@pytest.fixture(autouse=True)
+def mock_auth():
+    with patch("middleware.auth_middleware.get_current_user", return_value={"user_id": "u1"}):
+        yield
+
+
+def _db_mock_campaign(supabase_mock, sandbox_mode=True, status="draft"):
+    """Helper to mock a campaign DB row."""
+    campaign_data = {
+        "id": "camp1", "user_id": "u1", "name": "Test Campaign",
+        "opportunity_id": "opp1", "sandbox_mode": sandbox_mode,
+        "status": status, "description": "Test outreach",
+    }
+    supabase_mock.return_value.table.return_value.select.return_value \
+        .eq.return_value.single.return_value.execute.return_value.data = campaign_data
+    return campaign_data
+
+
+class TestGenerateDrafts:
+    @pytest.mark.asyncio
+    async def test_generates_drafts_for_contacts(self):
+        with patch("routers.campaigns.get_supabase_admin") as mock_db, \
+             patch("routers.campaigns.get_ai_provider") as mock_ai_factory:
+            _db_mock_campaign(mock_db)
+            table = mock_db.return_value.table.return_value
+            # contacts query
+            table.select.return_value.eq.return_value.eq.return_value \
+                .execute.return_value.data = [
+                {
+                    "id": "c1", "first_name": "Jane", "last_name": "Doe",
+                    "email": "jane@stripe.com", "title": "EM", "company": "Stripe",
+                    "persona_type": "hiring_manager", "opportunity_id": "opp1",
+                }
+            ]
+            # existing drafts check (none)
+            table.select.return_value.eq.return_value.execute.return_value.data = []
+            # user profile
+            table.select.return_value.eq.return_value.single.return_value \
+                .execute.return_value.data = {"signature_name": "Neel"}
+            # opportunity
+            table.select.return_value.eq.return_value.single.return_value \
+                .execute.return_value.data = {"id": "opp1", "role": "Backend Eng"}
+            # draft insert
+            table.insert.return_value.execute.return_value.data = [{"id": "d1"}]
+
+            mock_ai = AsyncMock()
+            mock_ai.provider_name = "groq"
+            mock_ai.model = "llama-3.1-8b-instant"
+            from providers.ai.base import GenerationResult
+            mock_ai.generate = AsyncMock(return_value=GenerationResult(
+                text="Subject: Hi Jane\n\nHello! I admire Stripe's infrastructure...",
+                model="llama-3.1-8b-instant",
+                provider="groq",
+            ))
+            mock_ai_factory.return_value = mock_ai
+
+            client = TestClient(_make_app())
+            resp = client.post("/api/campaigns/camp1/generate-drafts",
+                json={"regenerate": False, "tone": "professional"},
+                headers={"Authorization": "Bearer t"})
+            assert resp.status_code == 200
+            assert resp.json()["generated"] >= 0
+
+    def test_requires_contacts(self):
+        with patch("routers.campaigns.get_supabase_admin") as mock_db, \
+             patch("routers.campaigns.get_ai_provider"):
+            _db_mock_campaign(mock_db)
+            table = mock_db.return_value.table.return_value
+            table.select.return_value.eq.return_value.eq.return_value \
+                .execute.return_value.data = []
+            table.select.return_value.eq.return_value.execute.return_value.data = []
+
+            client = TestClient(_make_app())
+            resp = client.post("/api/campaigns/camp1/generate-drafts",
+                json={"regenerate": False},
+                headers={"Authorization": "Bearer t"})
+            assert resp.status_code == 400
+            assert "No contacts" in resp.json()["detail"]
+
+
+class TestDraftApproval:
+    def test_approve_draft(self):
+        with patch("routers.campaigns.get_supabase_admin") as mock_db:
+            table = mock_db.return_value.table.return_value
+            table.select.return_value.eq.return_value.eq.return_value.eq.return_value \
+                .single.return_value.execute.return_value.data = {
+                "id": "d1", "campaign_id": "camp1", "status": "draft",
+                "subject": "Hi", "body": "Hello!"
+            }
+            table.update.return_value.eq.return_value.execute.return_value = None
+            client = TestClient(_make_app())
+            resp = client.post("/api/campaigns/camp1/drafts/approve",
+                json={"draft_id": "d1", "action": "approve"},
+                headers={"Authorization": "Bearer t"})
+            assert resp.status_code == 200
+            assert resp.json()["action"] == "approve"
+
+    def test_reject_draft_with_reason(self):
+        with patch("routers.campaigns.get_supabase_admin") as mock_db:
+            table = mock_db.return_value.table.return_value
+            table.select.return_value.eq.return_value.eq.return_value.eq.return_value \
+                .single.return_value.execute.return_value.data = {
+                "id": "d1", "campaign_id": "camp1", "status": "draft",
+                "subject": "Hi", "body": "Hello!"
+            }
+            table.update.return_value.eq.return_value.execute.return_value = None
+            client = TestClient(_make_app())
+            resp = client.post("/api/campaigns/camp1/drafts/approve",
+                json={"draft_id": "d1", "action": "reject", "rejection_reason": "Too generic"},
+                headers={"Authorization": "Bearer t"})
+            assert resp.status_code == 200
+            assert resp.json()["action"] == "reject"
+
+    def test_invalid_action(self):
+        with patch("routers.campaigns.get_supabase_admin") as mock_db:
+            table = mock_db.return_value.table.return_value
+            table.select.return_value.eq.return_value.eq.return_value.eq.return_value \
+                .single.return_value.execute.return_value.data = {
+                "id": "d1", "campaign_id": "camp1", "status": "draft",
+                "subject": "Hi", "body": "Hello!"
+            }
+            client = TestClient(_make_app())
+            resp = client.post("/api/campaigns/camp1/drafts/approve",
+                json={"draft_id": "d1", "action": "blast"},
+                headers={"Authorization": "Bearer t"})
+            assert resp.status_code == 422
+
+
+class TestSandboxSafetyGate:
+    def test_blocks_when_sandbox_on(self):
+        with patch("routers.campaigns.get_supabase_admin") as mock_db:
+            _db_mock_campaign(mock_db, sandbox_mode=True)
+            client = TestClient(_make_app())
+            resp = client.post("/api/campaigns/camp1/send/start",
+                json={"dry_run": False},
+                headers={"Authorization": "Bearer t"})
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["blocked"] is True
+            assert "Sandbox" in body["reason"]
+
+    def test_dry_run_returns_preflight(self):
+        with patch("routers.campaigns.get_supabase_admin") as mock_db:
+            _db_mock_campaign(mock_db, sandbox_mode=False)
+            table = mock_db.return_value.table.return_value
+            table.select.return_value.eq.return_value.eq.return_value \
+                .execute.return_value.count = 3
+            client = TestClient(_make_app())
+            resp = client.post("/api/campaigns/camp1/send/start",
+                json={"dry_run": True},
+                headers={"Authorization": "Bearer t"})
+            assert resp.status_code == 200
+            assert resp.json()["dry_run"] is True
+
+    def test_blocks_without_smtp(self):
+        with patch("routers.campaigns.get_supabase_admin") as mock_db, \
+             patch("routers.campaigns.get_credential_service") as mock_cred:
+            _db_mock_campaign(mock_db, sandbox_mode=False)
+            mock_cred.return_value.get_decrypted.side_effect = Exception("No SMTP")
+            client = TestClient(_make_app())
+            resp = client.post("/api/campaigns/camp1/send/start",
+                json={"dry_run": False},
+                headers={"Authorization": "Bearer t"})
+            assert resp.status_code == 400
+            assert "SMTP" in resp.json()["detail"]
+
+
+class TestCampaignPauseResumeStop:
+    def test_pause(self):
+        with patch("routers.campaigns.get_supabase_admin") as mock_db:
+            table = mock_db.return_value.table.return_value
+            table.select.return_value.eq.return_value.eq.return_value \
+                .single.return_value.execute.return_value.data = {"id": "camp1"}
+            table.update.return_value.eq.return_value.execute.return_value = None
+            resp = TestClient(_make_app()).post("/api/campaigns/camp1/send/pause",
+                headers={"Authorization": "Bearer t"})
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "paused"
+
+    def test_stop_also_cancels_drafts(self):
+        with patch("routers.campaigns.get_supabase_admin") as mock_db:
+            table = mock_db.return_value.table.return_value
+            table.select.return_value.eq.return_value.eq.return_value \
+                .single.return_value.execute.return_value.data = {"id": "camp1"}
+            table.update.return_value.eq.return_value.execute.return_value = None
+            table.update.return_value.eq.return_value.eq.return_value.execute.return_value = None
+            resp = TestClient(_make_app()).post("/api/campaigns/camp1/send/stop",
+                headers={"Authorization": "Bearer t"})
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "completed"
+
+
+class TestOutcomes:
+    def test_record_valid_outcome(self):
+        with patch("routers.campaigns.get_supabase_admin") as mock_db:
+            table = mock_db.return_value.table.return_value
+            table.update.return_value.eq.return_value.eq.return_value.execute.return_value = None
+            resp = TestClient(_make_app()).post("/api/campaigns/camp1/outcomes",
+                json={"contact_id": "c1", "outcome": "replied"},
+                headers={"Authorization": "Bearer t"})
+            assert resp.status_code == 200
+            assert resp.json()["outcome"] == "replied"
+
+    def test_rejects_invalid_outcome(self):
+        resp = TestClient(_make_app()).post("/api/campaigns/camp1/outcomes",
+            json={"contact_id": "c1", "outcome": "ghosted"},
+            headers={"Authorization": "Bearer t"})
+        assert resp.status_code == 422
+
+
+class TestDraftQualityScorer:
+    def test_score_penalizes_generic_phrases(self):
+        from routers.campaigns import _score_draft
+        score, issues = _score_draft(
+            subject="I hope this finds you well",
+            body="I hope this finds you well. I am writing to discuss synergy opportunities.",
+            contact={"first_name": "Jane", "company": "Stripe"},
+            profile={},
+        )
+        assert score < 80
+        assert any("generic" in i["type"] for i in issues)
+
+    def test_score_penalizes_too_long(self):
+        from routers.campaigns import _score_draft
+        body = "word " * 250
+        score, issues = _score_draft("Subject", body, {}, {})
+        assert any(i["type"] == "length" for i in issues)
+
+    def test_score_high_for_good_email(self):
+        from routers.campaigns import _score_draft
+        score, issues = _score_draft(
+            subject="Quick question about Stripe's infra team",
+            body="Hi Jane, I saw Stripe's recent blog post on distributed systems. "
+                 "I've spent the last 3 years building similar pipelines at scale. "
+                 "Would you be open to a 15-min chat?",
+            contact={"first_name": "Jane", "company": "Stripe"},
+            profile={"signature_name": "Neel"},
+        )
+        assert score >= 70
+
+
+class TestParseEmailOutput:
+    def test_parses_subject_and_body(self):
+        from routers.campaigns import _parse_email_output
+        text = "Subject: Quick question\n\nHi Jane, I noticed..."
+        subject, body = _parse_email_output(text, {"company": "Stripe"}, {})
+        assert subject == "Quick question"
+        assert body.startswith("Hi Jane")
+
+    def test_fallback_subject_when_missing(self):
+        from routers.campaigns import _parse_email_output
+        text = "Hi Jane, I noticed your team at Stripe..."
+        subject, body = _parse_email_output(text, {"company": "Stripe"}, {})
+        assert "Stripe" in subject
+        assert "Hi Jane" in body
