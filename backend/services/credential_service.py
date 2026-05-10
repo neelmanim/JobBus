@@ -109,6 +109,77 @@ class CredentialService:
         supabase = get_supabase_admin()
         supabase.table("smtp_credentials").delete().eq("user_id", user_id).execute()
 
+    # ─── Multi-provider key management ────────────────────────────
+
+    # Map of logical field name → DB column name in user_secrets
+    _PROVIDER_FIELDS = {
+        "groq_key": "groq_key_encrypted",
+        "openai_key": "openai_key_encrypted",
+        "gemini_key": "gemini_key_encrypted",
+        "hunter_key": "hunter_key_encrypted",
+        "apollo_key": "apollo_key_encrypted",
+        "rocketreach_key": "rocketreach_key_encrypted",
+        "ollama_base_url": "ollama_base_url",  # not encrypted
+    }
+
+    _UNENCRYPTED_FIELDS = {"ollama_base_url"}
+
+    def store_provider_key(self, user_id: str, field: str, value: str) -> None:
+        """Encrypt and store a single provider key."""
+        col = self._PROVIDER_FIELDS.get(field)
+        if not col:
+            raise ValueError(f"Unknown provider field: {field}")
+
+        encrypted = value if field in self._UNENCRYPTED_FIELDS else self._encrypt(value)
+
+        supabase = get_supabase_admin()
+        existing = supabase.table("user_secrets").select("id").eq("user_id", user_id).execute()
+
+        if existing.data:
+            supabase.table("user_secrets").update(
+                {col: encrypted, "updated_at": "NOW()"}
+            ).eq("user_id", user_id).execute()
+        else:
+            supabase.table("user_secrets").insert(
+                {"user_id": user_id, col: encrypted}
+            ).execute()
+
+    def get_decrypted_field(self, user_id: str, field: str) -> str | None:
+        """Retrieve and decrypt a single provider key. Returns None if not set."""
+        col = self._PROVIDER_FIELDS.get(field)
+        if not col:
+            raise ValueError(f"Unknown provider field: {field}")
+
+        supabase = get_supabase_admin()
+        result = supabase.table("user_secrets").select(col).eq("user_id", user_id).execute()
+
+        if not result.data:
+            return None
+
+        raw = result.data[0].get(col)
+        if not raw:
+            return None
+
+        if field in self._UNENCRYPTED_FIELDS:
+            return raw
+        return self._decrypt(raw)
+
+    def get_provider_status(self, user_id: str) -> dict:
+        """Return which provider keys are configured (booleans, no secrets exposed)."""
+        supabase = get_supabase_admin()
+        result = supabase.table("user_secrets").select("*").eq("user_id", user_id).execute()
+
+        row = result.data[0] if result.data else {}
+        return {
+            "groq": bool(row.get("groq_key_encrypted")),
+            "openai": bool(row.get("openai_key_encrypted")),
+            "gemini": bool(row.get("gemini_key_encrypted")),
+            "hunter": bool(row.get("hunter_key_encrypted")),
+            "apollo": bool(row.get("apollo_key_encrypted")),
+            "rocketreach": bool(row.get("rocketreach_key_encrypted")),
+            "ollama_url": row.get("ollama_base_url") or None,
+        }
+
 
 # Singleton
 _credential_service: CredentialService | None = None
