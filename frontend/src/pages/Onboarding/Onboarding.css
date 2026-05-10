@@ -1,0 +1,271 @@
+/* ── Onboarding Layout ──────────────────────────────────── */
+.onboarding-root {
+  display: flex;
+  min-height: 100vh;
+  background: var(--bg-primary);
+}
+
+/* ── Sidebar ────────────────────────────────────────────── */
+.onboarding-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-8) var(--space-6);
+  gap: var(--space-8);
+}
+.onboarding-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.brand-icon { font-size: 24px; }
+.brand-name {
+  font-size: var(--font-size-lg);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  background: var(--brand-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Step nav */
+.onboarding-steps-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.onboarding-step-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+  transition: all var(--transition-fast);
+}
+.onboarding-step-nav .step-nav-icon {
+  color: var(--text-tertiary);
+  display: flex;
+}
+.onboarding-step-nav.done {
+  color: var(--color-success);
+}
+.onboarding-step-nav.done .step-nav-icon { color: var(--color-success); }
+.onboarding-step-nav.active {
+  background: var(--brand-primary-glow);
+  color: var(--brand-primary-light);
+  font-weight: 600;
+}
+.onboarding-step-nav.active .step-nav-icon { color: var(--brand-primary-light); }
+
+.onboarding-tagline {
+  margin-top: auto;
+  font-size: var(--font-size-2xl);
+  font-weight: 800;
+  line-height: 1.3;
+  color: var(--text-tertiary);
+  opacity: 0.35;
+}
+
+/* ── Main ───────────────────────────────────────────────── */
+.onboarding-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8) var(--space-6);
+  overflow-y: auto;
+}
+.onboarding-card {
+  width: 100%;
+  max-width: 540px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* ── Step Content ───────────────────────────────────────── */
+.onboarding-step-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.onboarding-step-content h1 {
+  font-size: var(--font-size-3xl);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.onboarding-step-content h2 {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.onboarding-desc {
+  font-size: var(--font-size-base);
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.step-header-icon {
+  display: inline-flex;
+  padding: var(--space-3);
+  background: var(--brand-primary-glow);
+  color: var(--brand-primary-light);
+  border-radius: var(--radius-md);
+  width: fit-content;
+}
+
+/* ── Welcome Step ───────────────────────────────────────── */
+.welcome-emoji { font-size: 48px; }
+.welcome-features {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.welcome-feature {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+.feature-emoji { font-size: 18px; flex-shrink: 0; }
+
+/* ── SMTP Step ──────────────────────────────────────────── */
+.password-field {
+  position: relative;
+}
+.password-field .input { padding-right: 44px; }
+.password-toggle {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  padding: 4px;
+}
+.password-toggle:hover { color: var(--text-primary); }
+
+/* ── Provider Step ──────────────────────────────────────── */
+.provider-section-label {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+.provider-toggle-group {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.provider-toggle {
+  padding: 8px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.provider-toggle:hover { border-color: var(--brand-primary); color: var(--text-primary); }
+.provider-toggle.selected {
+  border-color: var(--brand-primary);
+  background: var(--brand-primary-glow);
+  color: var(--brand-primary-light);
+  font-weight: 600;
+}
+.onboarding-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+}
+
+/* ── Resume Step ────────────────────────────────────────── */
+.resume-tabs {
+  display: flex;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: var(--space-3);
+}
+.resume-tab-btn {
+  padding: 6px 14px;
+  border: none;
+  background: none;
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+}
+.resume-tab-btn.active {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.resume-textarea { resize: vertical; min-height: 200px; font-family: var(--font-mono, monospace); font-size: 13px; }
+.resume-file-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+
+/* ── Success ────────────────────────────────────────────── */
+.step-success {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-success);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  padding: var(--space-3) var(--space-4);
+  background: rgba(34,197,94,0.08);
+  border-radius: var(--radius-md);
+}
+
+/* ── Nav ────────────────────────────────────────────────── */
+.onboarding-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+}
+.onboarding-skip {
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+.onboarding-skip:hover { color: var(--text-secondary); }
+
+/* ── Responsive ─────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .onboarding-sidebar { display: none; }
+  .onboarding-main { padding: var(--space-6) var(--space-4); }
+}

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { useToast } from '../../contexts/ToastContext';
+
 import {
   Plus, Send, Pause, Play, Square, BarChart3,
   Mail, Users, Clock, ChevronRight, X, Trash2
@@ -9,6 +11,8 @@ import './Campaigns.css';
 
 export default function Campaigns() {
   const toast = useToast();
+  const navigate = useNavigate();
+
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -105,23 +109,18 @@ export default function Campaigns() {
                   </div>
                 </div>
                 <div className="campaign-stats">
-                  <div className="mini-stat">
-                    <Users size={14} />
-                    <span>{c.total_contacts || 0}</span>
-                  </div>
-                  <div className="mini-stat">
-                    <Mail size={14} />
-                    <span>{c.total_sent || 0}</span>
-                  </div>
-                  <div className="mini-stat">
-                    <BarChart3 size={14} />
-                    <span>{c.total_replies || 0}</span>
-                  </div>
-                  <ChevronRight
-                    size={16}
-                    className={`expand-arrow ${expandedId === c.id ? 'expanded' : ''}`}
-                  />
+                  <div className="mini-stat"><Users size={14} /><span>{c.total_contacts || 0}</span></div>
+                  <div className="mini-stat"><Mail size={14} /><span>{c.total_sent || 0}</span></div>
+                  <div className="mini-stat"><BarChart3 size={14} /><span>{c.total_replies || 0}</span></div>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={e => { e.stopPropagation(); navigate(`/campaigns/${c.id}`); }}
+                    title="Open campaign"
+                  >
+                    <ChevronRight size={15} />
+                  </button>
                 </div>
+
               </div>
 
               {expandedId === c.id && (

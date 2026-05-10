@@ -4,7 +4,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { api } from '../../lib/api';
 import {
   Target, Send, FileText, TrendingUp, Activity,
-  ArrowUpRight, Sparkles, Zap, ChevronRight, Upload
+  ArrowUpRight, Sparkles, Zap, ChevronRight, Upload,
+  CheckCircle, Circle, X
 } from 'lucide-react';
 import './Dashboard.css';
 
@@ -12,6 +13,11 @@ export default function Dashboard() {
   const { profile } = useAuth();
   const [stats, setStats] = useState({ campaigns: 0, opportunities: 0, sent: 0, replies: 0 });
   const [resumeReady, setResumeReady] = useState(false);
+  const [smtpReady, setSmtpReady] = useState(false);
+  const [providerReady, setProviderReady] = useState(false);
+  const [checklistDismissed, setChecklistDismissed] = useState(
+    () => localStorage.getItem('jb_checklist_dismissed') === 'true'
+  );
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -20,9 +26,11 @@ export default function Dashboard() {
 
   async function loadDashboard() {
     try {
-      const [campaigns, resume] = await Promise.allSettled([
+      const [campaigns, resume, smtp, providers] = await Promise.allSettled([
         api.listCampaigns(),
         api.getResumeProfile(),
+        api.getSmtpStatus(),
+        api.getProviderStatus(),
       ]);
 
       if (campaigns.status === 'fulfilled' && Array.isArray(campaigns.value)) {
@@ -34,9 +42,12 @@ export default function Dashboard() {
           replies: c.reduce((sum, x) => sum + (x.total_replies || 0), 0),
         }));
       }
-
-      if (resume.status === 'fulfilled' && resume.value) {
-        setResumeReady(true);
+      if (resume.status === 'fulfilled' && resume.value) setResumeReady(true);
+      if (smtp.status === 'fulfilled' && smtp.value?.connected) setSmtpReady(true);
+      if (providers.status === 'fulfilled') {
+        const p = providers.value;
+        setProviderReady(p?.groq?.active || p?.openai?.active || p?.gemini?.active ||
+          p?.system_groq_available || false);
       }
     } catch (err) {
       console.error('Dashboard load error:', err);
@@ -44,6 +55,20 @@ export default function Dashboard() {
       setLoading(false);
     }
   }
+
+  function dismissChecklist() {
+    localStorage.setItem('jb_checklist_dismissed', 'true');
+    setChecklistDismissed(true);
+  }
+
+  const checklistItems = [
+    { done: smtpReady,    label: 'Connect your Gmail',         link: '/settings', hint: 'Settings → Email' },
+    { done: providerReady, label: 'Add an AI provider key',    link: '/settings', hint: 'Settings → AI & Search' },
+    { done: resumeReady,  label: 'Upload your resume',         link: '/resume',   hint: 'Resume page' },
+    { done: stats.campaigns > 0, label: 'Create your first campaign', link: '/campaigns', hint: 'Campaigns page' },
+  ];
+  const checklistAllDone = checklistItems.every(c => c.done);
+  const showChecklist = !checklistDismissed && !checklistAllDone;
 
   const greeting = () => {
     const h = new Date().getHours();
@@ -59,7 +84,32 @@ export default function Dashboard() {
         <p>Here's your career outreach overview</p>
       </div>
 
-      {/* Stats Grid */}
+      {/* Onboarding Checklist */}
+      {showChecklist && (
+        <div className="checklist-card">
+          <div className="checklist-header">
+            <div>
+              <h3 className="checklist-title">Getting Started</h3>
+              <p className="checklist-subtitle">{checklistItems.filter(c => c.done).length} of {checklistItems.length} complete</p>
+            </div>
+            <button className="btn btn-ghost btn-sm" onClick={dismissChecklist}><X size={16} /></button>
+          </div>
+          <div className="checklist-progress-track">
+            <div className="checklist-bar" style={{ width: `${(checklistItems.filter(c => c.done).length / checklistItems.length) * 100}%` }} />
+          </div>
+          <div className="checklist-items">
+            {checklistItems.map((item, i) => (
+              <Link key={i} to={item.link} className={`checklist-item ${item.done ? 'done' : ''}`}>
+                {item.done ? <CheckCircle size={18} className="check-done" /> : <Circle size={18} className="check-todo" />}
+                <span className="checklist-label">{item.label}</span>
+                <span className="checklist-hint">{item.hint}</span>
+                {!item.done && <ChevronRight size={14} className="text-tertiary" />}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="stats-grid">
         <StatCard
           icon={<Target size={20} />}

@@ -1,21 +1,195 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { useToast } from '../../contexts/ToastContext';
 import {
   Search, MapPin, Target, TrendingUp, Building2,
-  Users, Briefcase, ChevronDown, ExternalLink, Sparkles,
-  Filter, RefreshCw
+  Briefcase, ExternalLink, Sparkles, Zap, X,
+  ChevronRight, Users, Globe, ArrowRight, Loader
 } from 'lucide-react';
 import './Opportunities.css';
 
+/* ── Outreach Modal ─────────────────────────────────────────── */
+function OutreachModal({ opp, onClose }) {
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [step, setStep] = useState('setup');   // setup | finding | done
+  const [domain, setDomain]       = useState(opp.domain || '');
+  const [angle, setAngle]         = useState('');
+  const [result, setResult]       = useState(null);
+
+  const company = opp.company || opp.company_name || 'Company';
+  const title   = opp.title   || opp.role_title   || 'Untitled Role';
+
+  async function handleStart() {
+    if (!domain.trim()) { toast.error('Enter a company domain to find contacts'); return; }
+    setStep('finding');
+    try {
+      // 1 — create the campaign
+      const campaign = await api.createCampaign({
+        name: `${company} — ${title}`,
+        outreach_angle: angle || `Outreach for ${title} role at ${company}`,
+        sandbox_mode: true,
+        opportunity_id: opp.id || null,
+      });
+
+      // 2 — waterfall contact search
+      const found = await api.findContacts({
+        opportunity_id: opp.id || null,
+        company,
+        domain: domain.trim(),
+      });
+
+      // 3 — attach contacts to campaign
+      if (found?.contacts?.length) {
+        await api.addCampaignContacts(campaign.id, found.contacts);
+      }
+
+      setResult({ campaign, found });
+      setStep('done');
+    } catch (err) {
+      toast.error(err.message || 'Something went wrong');
+      setStep('setup');
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal outreach-modal">
+        {/* Header */}
+        <div className="modal-header">
+          <div>
+            <h2 className="modal-title">Start Outreach</h2>
+            <p className="modal-subtitle text-secondary">{title} · {company}</p>
+          </div>
+          <button className="btn btn-ghost btn-sm icon-only" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        {/* Setup Step */}
+        {step === 'setup' && (
+          <div className="modal-body">
+            <div className="outreach-opp-summary">
+              <div className={`score-badge ${getTierClass(opp.score || 0)} score-sm`}>{opp.score || '—'}</div>
+              <div>
+                <p className="font-medium">{company}</p>
+                <p className="text-sm text-secondary">{opp.location || 'Remote'}</p>
+              </div>
+            </div>
+
+            <div className="input-group">
+              <label className="input-label">
+                <Globe size={14} /> Company Domain <span className="text-danger">*</span>
+              </label>
+              <input
+                className="input"
+                placeholder="e.g. stripe.com"
+                value={domain}
+                onChange={e => setDomain(e.target.value)}
+                autoFocus
+              />
+              <span className="text-xs text-secondary">Used to find the right contacts via Hunter → Apollo → RocketReach</span>
+            </div>
+
+            <div className="input-group">
+              <label className="input-label">Outreach Angle <span className="text-secondary">(optional)</span></label>
+              <input
+                className="input"
+                placeholder={`e.g. Excited by ${company}'s recent Series B — want to discuss the ${title} role`}
+                value={angle}
+                onChange={e => setAngle(e.target.value)}
+              />
+              <span className="text-xs text-secondary">The AI uses this to personalise every draft</span>
+            </div>
+
+            <div className="outreach-what-happens">
+              <p className="text-xs font-medium text-secondary" style={{ marginBottom: 8 }}>WHAT HAPPENS NEXT</p>
+              <div className="outreach-steps">
+                <div className="outreach-step"><span className="step-num">1</span> Campaign created in <strong>sandbox mode</strong></div>
+                <div className="outreach-step"><span className="step-num">2</span> Contacts discovered via waterfall search</div>
+                <div className="outreach-step"><span className="step-num">3</span> You land in Campaign Detail to review + approve drafts</div>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleStart} disabled={!domain.trim()}>
+                <Zap size={15} /> Find Contacts & Start
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Finding Step */}
+        {step === 'finding' && (
+          <div className="modal-body modal-loading">
+            <div className="finding-animation">
+              <Loader size={36} className="spin-icon" style={{ color: 'var(--brand-primary-light)' }} />
+            </div>
+            <p className="font-medium" style={{ marginTop: 16 }}>Creating campaign…</p>
+            <p className="text-sm text-secondary">Searching Hunter → Apollo → RocketReach for contacts at <strong>{company}</strong></p>
+          </div>
+        )}
+
+        {/* Done Step */}
+        {step === 'done' && result && (
+          <div className="modal-body">
+            <div className="outreach-success">
+              <div className="success-icon">🎯</div>
+              <h3>Campaign created!</h3>
+              <div className="success-stats">
+                <div className="success-stat">
+                  <span className="success-num">{result.found?.total_found || 0}</span>
+                  <span className="text-secondary text-sm">contacts found</span>
+                </div>
+                <div className="success-stat">
+                  <span className="success-num">{result.found?.provider_used || '—'}</span>
+                  <span className="text-secondary text-sm">via</span>
+                </div>
+              </div>
+              {(result.found?.total_found || 0) === 0 && (
+                <p className="text-sm text-secondary" style={{ textAlign: 'center' }}>
+                  No contacts found automatically. You can add them manually in the campaign.
+                </p>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-ghost" onClick={onClose}>Close</button>
+              <button
+                className="btn btn-primary"
+                onClick={() => navigate(`/campaigns/${result.campaign.id}`)}
+              >
+                Open Campaign <ArrowRight size={15} />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Helpers ────────────────────────────────────────────────── */
+function getTierClass(score) {
+  if (score >= 70) return 'tier-high';
+  if (score >= 40) return 'tier-medium';
+  return 'tier-low';
+}
+function getTierLabel(score) {
+  if (score >= 70) return 'High';
+  if (score >= 40) return 'Medium';
+  return 'Low';
+}
+
+/* ── Main Page ──────────────────────────────────────────────── */
 export default function Opportunities() {
   const toast = useToast();
-  const [query, setQuery] = useState('');
-  const [location, setLocation] = useState('');
+  const [query, setQuery]             = useState('');
+  const [location, setLocation]       = useState('');
   const [opportunities, setOpportunities] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [searched, setSearched] = useState(false);
+  const [loading, setLoading]         = useState(false);
+  const [searched, setSearched]       = useState(false);
   const [selectedOpp, setSelectedOpp] = useState(null);
+  const [outreachOpp, setOutreachOpp] = useState(null);  // which card opened the modal
 
   async function handleSearch(e) {
     e.preventDefault();
@@ -31,18 +205,6 @@ export default function Opportunities() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function getTierClass(score) {
-    if (score >= 70) return 'tier-high';
-    if (score >= 40) return 'tier-medium';
-    return 'tier-low';
-  }
-
-  function getTierLabel(score) {
-    if (score >= 70) return 'High';
-    if (score >= 40) return 'Medium';
-    return 'Low';
   }
 
   return (
@@ -61,7 +223,7 @@ export default function Opportunities() {
             className="input"
             placeholder="Job title, skills, or company..."
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={e => setQuery(e.target.value)}
           />
         </div>
         <div className="search-field location-field">
@@ -71,7 +233,7 @@ export default function Opportunities() {
             className="input"
             placeholder="Location (optional)"
             value={location}
-            onChange={(e) => setLocation(e.target.value)}
+            onChange={e => setLocation(e.target.value)}
           />
         </div>
         <button type="submit" className="btn btn-primary" disabled={loading || !query.trim()}>
@@ -82,7 +244,7 @@ export default function Opportunities() {
       {/* Results */}
       {loading ? (
         <div className="opp-loading">
-          {[1,2,3].map(i => (
+          {[1, 2, 3].map(i => (
             <div key={i} className="card opp-skeleton">
               <div className="skeleton" style={{ width: '60%', height: 20, marginBottom: 12 }} />
               <div className="skeleton" style={{ width: '40%', height: 16, marginBottom: 20 }} />
@@ -95,10 +257,13 @@ export default function Opportunities() {
           {opportunities.map((opp, idx) => (
             <div
               key={opp.id || idx}
-              className="card card-interactive opp-card"
-              onClick={() => setSelectedOpp(selectedOpp === idx ? null : idx)}
+              className={`card opp-card ${selectedOpp === idx ? 'expanded' : ''}`}
             >
-              <div className="opp-card-header">
+              {/* Card Header — always visible */}
+              <div
+                className="opp-card-header card-interactive"
+                onClick={() => setSelectedOpp(selectedOpp === idx ? null : idx)}
+              >
                 <div className="opp-info">
                   <h3 className="opp-title">{opp.title || opp.role_title || 'Untitled Role'}</h3>
                   <div className="opp-meta">
@@ -115,7 +280,6 @@ export default function Opportunities() {
                   </div>
                 </div>
 
-                {/* Score Ring */}
                 <div className="opp-score-area">
                   <div className={`score-badge ${getTierClass(opp.score || 0)}`}>
                     <span className="score-num">{opp.score || 0}</span>
@@ -124,7 +288,7 @@ export default function Opportunities() {
                 </div>
               </div>
 
-              {/* Signal Breakdown */}
+              {/* Signals */}
               {opp.signals && (
                 <div className="signal-grid">
                   {opp.signals.map((signal, si) => (
@@ -153,12 +317,25 @@ export default function Opportunities() {
                     </div>
                   )}
                   {opp.url && (
-                    <a href={opp.url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-sm">
+                    <a href={opp.url} target="_blank" rel="noopener noreferrer"
+                      className="btn btn-ghost btn-sm"
+                      onClick={e => e.stopPropagation()}>
                       <ExternalLink size={14} /> View Listing
                     </a>
                   )}
                 </div>
               )}
+
+              {/* ── Start Outreach CTA ── */}
+              <div className="opp-card-footer">
+                <button
+                  className="btn btn-primary btn-sm outreach-btn"
+                  onClick={e => { e.stopPropagation(); setOutreachOpp(opp); }}
+                >
+                  <Zap size={14} /> Start Outreach
+                  <ChevronRight size={14} />
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -174,6 +351,14 @@ export default function Opportunities() {
           <h3>Search for opportunities</h3>
           <p>Enter a job title or skill to discover scored opportunities with hiring signals.</p>
         </div>
+      )}
+
+      {/* Outreach Modal */}
+      {outreachOpp && (
+        <OutreachModal
+          opp={outreachOpp}
+          onClose={() => setOutreachOpp(null)}
+        />
       )}
     </div>
   );
