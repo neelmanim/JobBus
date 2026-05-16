@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -37,11 +37,12 @@ const AI_MODELS = {
   ollama: [{ id: 'auto', label: 'Default Model' }],
 };
 
+// hasKey = true but untested → show a muted green check (key IS saved, just not verified yet)
 function StatusDot({ ok, loading }) {
   if (loading) return <Loader size={14} className="spin-icon" />;
   if (ok === true)  return <CheckCircle size={14} style={{ color: 'var(--color-success)' }} />;
   if (ok === false) return <XCircle size={14} style={{ color: 'var(--color-danger)' }} />;
-  return <Clock size={14} style={{ color: 'var(--text-tertiary)' }} />;
+  return <Check size={14} style={{ color: 'var(--color-success)', opacity: 0.7 }} />;
 }
 
 function ProviderKeyRow({ prov, savedKeys, onSave, onTest, testingField }) {
@@ -72,15 +73,13 @@ function ProviderKeyRow({ prov, savedKeys, onSave, onTest, testingField }) {
         <div className="provider-status-group">
           {hasKey && (
             <span className={`provider-status-chip ${
-              testResult === true  ? 'chip-ok' :
-              testResult === false ? 'chip-fail' :
-              'chip-saved'
+              testResult === false ? 'chip-fail' : 'chip-ok'
             }`}>
               <StatusDot ok={testResult} loading={testingField === prov.field} />
               {testingField === prov.field ? 'Testing…' :
                testResult === true  ? 'Connected' :
                testResult === false ? 'Failed' :
-               'Saved'}
+               'Configured'}
             </span>
           )}
           {hasKey && (
@@ -133,6 +132,7 @@ export default function Settings() {
   const [aiModel, setAiModel] = useState('auto');
   const [searchProvider, setSearchProvider] = useState('hunter');
   const [savingPref, setSavingPref] = useState(false);
+  const autoTestedRef = useRef(false); // only auto-test once per session
 
   // ── Email Style ───────────────────────────────────────────
   const [style, setStyle] = useState({ signature_name: '', signature_title: '', signature_linkedin: '', custom_instructions: '' });
@@ -159,6 +159,23 @@ export default function Settings() {
       setAiProvider(data.ai_provider || 'groq');
       setAiModel(data.ai_model || 'auto');
       setSearchProvider(data.search_provider || 'hunter');
+
+      // Auto-test all configured providers once so chips show Connected/Failed immediately
+      if (!autoTestedRef.current) {
+        autoTestedRef.current = true;
+        const allFields = [
+          ...AI_PROVIDERS.map(p => p.field),
+          ...SEARCH_PROVIDERS.map(p => p.field),
+        ];
+        // Run sequentially to avoid hammering external APIs in parallel
+        for (const field of allFields) {
+          if (data[field]) {
+            // Small delay between each so the UI doesn't flicker all at once
+            await new Promise(r => setTimeout(r, 400));
+            handleTestKey(field, true); // silent — no toasts on auto-test
+          }
+        }
+      }
     } catch { /* silent */ }
   }
   async function loadEmailStyle() {
@@ -197,16 +214,18 @@ export default function Settings() {
       loadProviderStatus();
     } catch (err) { toast.error(err.message || 'Failed to save key'); }
   }
-  async function handleTestKey(field) {
+  async function handleTestKey(field, silent = false) {
     setTestingField(field);
     try {
       const r = await api.testProviderKey(field);
       const label = field.replace('_key', '').replace('_url', '');
-      if (r.success) toast.success(`${label} connected ✓`);
-      else           toast.error(`${label} test failed — check your key`);
+      if (!silent) {
+        if (r.success) toast.success(`${label} connected ✓`);
+        else           toast.error(`${label} test failed — check your key`);
+      }
       // Persist test result into providerStatus so chip updates immediately
       setProviderStatus(prev => ({ ...prev, [`${field}_ok`]: r.success }));
-    } catch (err) { toast.error(err.message); }
+    } catch (err) { if (!silent) toast.error(err.message); }
     finally { setTestingField(null); }
   }
   async function handleSaveAIPref() {
