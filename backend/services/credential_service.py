@@ -182,7 +182,7 @@ class CredentialService:
             "hunter_key":      bool(row.get("hunter_key_encrypted")),
             "apollo_key":      bool(row.get("apollo_key_encrypted")),
             "rocketreach_key": bool(row.get("rocketreach_key_encrypted")),
-            "ollama_url":      bool(row.get("ollama_base_url")),
+            "ollama_base_url": bool(row.get("ollama_base_url")),
         }
 
 

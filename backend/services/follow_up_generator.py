@@ -2,6 +2,7 @@
 JobBus Backend — Follow-up Generator.
 
 Generates tone-varied follow-up emails with smart scheduling and cancel rules.
+Supports all AI providers (Gemini, Groq, OpenAI) via httpx REST — no SDK imports.
 """
 
 from __future__ import annotations
@@ -13,9 +14,8 @@ import random
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-import google.generativeai as genai
-
 from database import get_supabase_admin
+from services.email_writer import _call_ai
 from models.enums import OutcomeType
 
 
@@ -51,11 +51,17 @@ ACHIEVEMENT TO USE (different from initial): {achievement}
 
 Return ONLY JSON: {{"subject": "Re: ...", "body": "..."}}"""
 
-    def __init__(self, api_key: str):
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel("gemini-2.0-flash")
+    def __init__(self, api_key: str, provider: str = "gemini"):
+        """Initialize with a provider key and name.
 
-    def generate_followup(
+        Args:
+            api_key: Decrypted API key for the provider.
+            provider: One of "gemini" (default), "groq", "openai".
+        """
+        self._api_key = api_key
+        self._provider = provider
+
+    async def generate_followup(
         self,
         initial_draft: dict,
         sequence: int,
@@ -105,8 +111,8 @@ Return ONLY JSON: {{"subject": "Re: ...", "body": "..."}}"""
             achievement=achievement,
         )
 
-        response = self.model.generate_content(prompt)
-        raw = response.text.strip()
+        raw = await _call_ai(self._provider, self._api_key, prompt)
+        raw = raw.strip()
         json_match = re.search(r"\{.*\}", raw, re.DOTALL)
         if json_match:
             raw = json_match.group(0)

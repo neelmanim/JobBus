@@ -114,7 +114,7 @@ async def save_resume_text(
         "email_context": f"Resume text provided by user ({len(text)} chars)",
         "file_path": None,
     }
-    result = supabase.table("user_resume_profiles").upsert(row).execute()
+    result = supabase.table("resume_profiles").upsert(row).execute()
     saved = result.data[0] if result.data else row
     return ResumeProfile(
         id=saved.get("id"),

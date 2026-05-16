@@ -3,6 +3,8 @@ JobBus Backend — Email Writer.
 
 Angle-first email generation using the Hook-Context-Credibility-CTA pattern.
 Ported from the Swift EmailWriter but redesigned around angles.
+
+Supports all AI providers (Gemini, Groq, OpenAI) via httpx REST — no SDK imports.
 """
 
 from __future__ import annotations
@@ -11,16 +13,82 @@ from __future__ import annotations
 import json
 import re
 import random
+import httpx
 from typing import Optional
-
-import google.generativeai as genai
 
 from models.schemas import EmailDraft, AngleResult
 from models.enums import AngleType
 
 
+# ─── Provider REST endpoints ───────────────────────────────────────────────
+
+_PROVIDER_CONFIGS = {
+    "gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/models",
+        "model": "gemini-2.0-flash",
+    },
+    "groq": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "model": "llama-3.3-70b-versatile",
+    },
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+    },
+}
+
+
+async def _call_ai(provider: str, api_key: str, prompt: str) -> str:
+    """Call any AI provider and return the raw text response.
+
+    Supports: gemini, groq, openai.
+    Raises ValueError with a descriptive message on failure.
+    """
+    cfg = _PROVIDER_CONFIGS.get(provider, _PROVIDER_CONFIGS["gemini"])
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        if provider == "gemini":
+            resp = await client.post(
+                f"{cfg['base_url']}/{cfg['model']}:generateContent",
+                params={"key": api_key},
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1024},
+                },
+            )
+        else:
+            # OpenAI-compatible (Groq + OpenAI)
+            resp = await client.post(
+                f"{cfg['base_url']}/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "model": cfg["model"],
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                },
+            )
+
+    if not resp.is_success:
+        raise ValueError(
+            f"{provider.title()} API error {resp.status_code}: "
+            f"{resp.text[:200]}"
+        )
+
+    data = resp.json()
+    if provider == "gemini":
+        candidates = data.get("candidates", [])
+        if not candidates:
+            raise ValueError("Gemini returned no candidates")
+        return candidates[0]["content"]["parts"][0]["text"]
+    else:
+        return data["choices"][0]["message"]["content"]
+
+
 class EmailWriter:
-    """Generates personalized outreach emails using the angle-first approach."""
+    """Generates personalized outreach emails using the angle-first approach.
+
+    Supports any AI provider (gemini, groq, openai) — no SDK dependency.
+    """
 
     SYSTEM_PROMPT = """You are an expert career outreach email writer. You write short, human, contextual emails.
 
@@ -45,9 +113,15 @@ STRICT RULES:
 Return ONLY valid JSON:
 {"subject": "...", "body": "..."}"""
 
-    def __init__(self, api_key: str):
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel("gemini-2.0-flash")
+    def __init__(self, api_key: str, provider: str = "gemini"):
+        """Initialize with a provider key and name.
+
+        Args:
+            api_key: Decrypted API key for the provider.
+            provider: One of "gemini" (default), "groq", "openai".
+        """
+        self._api_key = api_key
+        self._provider = provider if provider in _PROVIDER_CONFIGS else "gemini"
 
     async def generate(
         self,
@@ -79,6 +153,11 @@ Return ONLY valid JSON:
         achievements = resume_profile.get("achievements", [])
         selected_achievement = random.choice(achievements) if achievements else ""
 
+        avoid_line = (
+            f"AVOID these subject lines (already used): {', '.join(previous_subjects[:5])}"
+            if previous_subjects else ""
+        )
+
         prompt = f"""{self.SYSTEM_PROMPT}
 
 OUTREACH ANGLE: {angle_type}
@@ -94,12 +173,12 @@ CANDIDATE:
 - Background: {resume_profile.get('email_context', '')}
 - Achievement to use: {selected_achievement}
 
-{"AVOID these subject lines (already used): " + ', '.join(previous_subjects[:5]) if previous_subjects else ""}
+{avoid_line}
 
 Generate the email now. Return ONLY JSON."""
 
-        response = self.model.generate_content(prompt)
-        raw = response.text.strip()
+        raw = await _call_ai(self._provider, self._api_key, prompt)
+        raw = raw.strip()
 
         # Extract JSON
         json_match = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -109,7 +188,14 @@ Generate the email now. Return ONLY JSON."""
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            data = {"subject": f"Quick question for {contact.get('first_name', 'you')}", "body": raw}
+            data = {
+                "subject": f"Quick question for {contact.get('first_name', 'you')}",
+                "body": raw,
+            }
+
+        # Normalize signals_used to list[dict] (schema requires dict, not str)
+        if signals_used and isinstance(signals_used[0], str):
+            signals_used = [{"signal": s} for s in signals_used]
 
         return EmailDraft(
             contact_id=contact.get("id", ""),
@@ -117,7 +203,7 @@ Generate the email now. Return ONLY JSON."""
             body=data.get("body", ""),
             angle_type=AngleType(angle_type) if isinstance(angle_type, str) else angle_type,
             angle_reasoning=reasoning,
-            signals_used=signals_used,
+            signals_used=signals_used or [],
         )
 
     async def generate_batch(
@@ -128,10 +214,12 @@ Generate the email now. Return ONLY JSON."""
     ) -> list[EmailDraft]:
         """Generate drafts for multiple contacts with diversity."""
         drafts = []
-        used_subjects = []
+        used_subjects: list[str] = []
 
         for contact in contacts:
-            draft = await self.generate(contact, resume_profile, angle, previous_subjects=used_subjects)
+            draft = await self.generate(
+                contact, resume_profile, angle, previous_subjects=used_subjects
+            )
             used_subjects.append(draft.subject)
             drafts.append(draft)
 

@@ -163,17 +163,17 @@ async def complete_onboarding(
     # ── 1. SMTP credentials ──────────────────────────────────
     if request.smtp_user and request.smtp_pass:
         try:
-            from services.credential_service import get_credential_service as _cs
-            cs = _cs()
-            smtp_payload = {
-                "user_id": user_id,
-                "smtp_host_encrypted": cs._encrypt(request.smtp_host or "smtp.gmail.com"),
-                "smtp_port": request.smtp_port or 587,
-                "smtp_user_encrypted": cs._encrypt(request.smtp_user),
-                "smtp_pass_encrypted": cs._encrypt(request.smtp_pass),
-                "sender_name": request.sender_name or request.smtp_user,
-            }
-            supabase.table("user_smtp_credentials").upsert(smtp_payload).execute()
+            from models.schemas import SMTPCredentialCreate
+            cred_service.store(
+                user_id=user_id,
+                credentials=SMTPCredentialCreate(
+                    smtp_host=request.smtp_host or "smtp.gmail.com",
+                    smtp_port=request.smtp_port or 587,
+                    smtp_user=request.smtp_user,
+                    smtp_pass=request.smtp_pass,
+                    sender_name=request.sender_name,
+                ),
+            )
         except Exception as e:
             errors.append(f"SMTP: {e}")
 
@@ -219,22 +219,17 @@ async def complete_onboarding(
     # ── 4. Resume text (paste shortcut) ──────────────────────
     if request.resume_text and len(request.resume_text.strip()) > 50:
         try:
-            from services.resume_analyzer import save_resume_profile_from_text
-            save_resume_profile_from_text(user_id, request.resume_text.strip())
-        except Exception:
-            # save_resume_profile_from_text may not exist — store raw text as fallback
-            try:
-                supabase.table("user_resume_profiles").upsert({
-                    "user_id": user_id,
-                    "raw_text": request.resume_text.strip(),
-                    "name": user.get("display_name", ""),
-                    "role": "",
-                    "skills": [],
-                    "achievements": [],
-                    "email_context": "",
-                }).execute()
-            except Exception as e:
-                errors.append(f"resume_text: {e}")
+            supabase.table("resume_profiles").upsert({
+                "user_id": user_id,
+                "name": user.get("display_name", ""),
+                "role": "",
+                "skills": [],
+                "achievements": [],
+                "email_context": f"Resume text provided ({len(request.resume_text.strip())} chars — upload PDF to fully parse)",
+                "file_path": None,
+            }).execute()
+        except Exception as e:
+            errors.append(f"resume_text: {e}")
 
     # ── 5. Mark onboarding complete ──────────────────────────
     try:
