@@ -140,3 +140,16 @@
 .edu-item {
   margin-bottom: var(--space-2);
 }
+
+.achievements-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.achievements-list li {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}

@@ -51,8 +51,9 @@ export default function Resume() {
     setUploading(true);
     try {
       const data = await api.uploadResume(file);
-      setProfile(data);
-      toast.success('Resume analyzed successfully');
+      // Backend returns {profile: {...}, file_path: "..."} — extract the profile
+      setProfile(data.profile || data);
+      toast.success('Resume analyzed successfully! AI extracted your skills and profile.');
     } catch (err) {
       toast.error(err.message || 'Upload failed');
     } finally {
@@ -146,7 +147,7 @@ export default function Resume() {
               </div>
               <div className="profile-info">
                 <h2>{profile.name || 'Your Name'}</h2>
-                <p className="text-secondary">{profile.headline || profile.current_title || 'Professional'}</p>
+                <p className="text-secondary">{profile.role || profile.headline || profile.current_title || 'Professional'}</p>
               </div>
               <div className="profile-actions">
                 <button className="btn btn-secondary btn-sm" onClick={() => { setProfile(null); }}>
@@ -155,10 +156,21 @@ export default function Resume() {
               </div>
             </div>
 
-            {profile.summary && (
+            {profile.email_context && (
               <div className="profile-section">
                 <h4><Sparkles size={14} /> AI Summary</h4>
-                <p>{profile.summary}</p>
+                <p>{profile.email_context}</p>
+              </div>
+            )}
+
+            {profile.achievements && profile.achievements.length > 0 && (
+              <div className="profile-section">
+                <h4><Award size={14} /> Key Achievements</h4>
+                <ul className="achievements-list">
+                  {profile.achievements.map((a, i) => (
+                    <li key={i}>{a}</li>
+                  ))}
+                </ul>
               </div>
             )}
 
