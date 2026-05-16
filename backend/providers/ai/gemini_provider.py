@@ -83,14 +83,17 @@ class GeminiAIProvider:
         )
 
     async def test_connection(self) -> bool:
-        """Test Gemini API key by listing available models (no tokens consumed)."""
+        """Test Gemini API key by listing available models (no tokens consumed).
+
+        Google returns 200 for a valid key and 400/403 for an invalid one.
+        """
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
                 resp = await client.get(
                     "https://generativelanguage.googleapis.com/v1beta/models",
                     params={"key": self._api_key},
                 )
-                # 200 = valid key, 400/403 = invalid
+                # 200 = valid key; 400/403 = invalid or restricted key
                 return resp.status_code == 200
             except Exception:
                 return False
