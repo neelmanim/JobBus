@@ -7,31 +7,34 @@ import './Login.css';
 /**
  * Login flow — industry-standard invite-only pattern:
  *
- *  Returning user:  "Continue with Google" → OAuth → profile exists → dashboard
- *  New user:        "Continue with Google" → OAuth → no profile → invite code prompt → register → dashboard
+ *  Returning user:  "Continue with Google" → OAuth → profile found → dashboard (no code ever shown)
+ *  New user:        "Continue with Google" → OAuth → no profile → invite code prompt → register → onboarding
  *
- * The invite code NEVER blocks returning users. It's only shown once, post-OAuth,
- * to users who don't yet have a profile. This matches how Linear, Figma (beta),
- * and Loom handled invite-only access.
+ * The invite code is a REGISTRATION gate, not a login gate.
+ * It is shown exactly once, only to brand-new users, post-OAuth.
  */
 export default function Login() {
-  const { signInWithGoogle, session, profile, loading: authLoading } = useAuth();
+  const {
+    signInWithGoogle,
+    registerNewUser,
+    session,
+    profile,
+    loading: authLoading,
+  } = useAuth();
 
-  // 'sso'     — default: just show "Continue with Google"
-  // 'invite'  — post-OAuth, user has no profile yet → ask for code
-  // 'registering' — submitting the invite + registering
+  // 'sso'    — default: show "Continue with Google" to everyone
+  // 'invite' — post-OAuth for new users only: show invite code entry
   const [step, setStep] = useState('sso');
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [signingIn, setSigningIn] = useState(false);
   const [registering, setRegistering] = useState(false);
 
-  // AuthContext fires loadOrCreateProfile after OAuth. If profile is null
-  // AND we have a session (meaning SSO completed but no profile exists),
-  // it means this is a brand-new user → prompt for invite code.
+  // After OAuth completes, AuthContext fires. If the user has no profile yet
+  // (brand-new account, 404 from backend), show the invite code step.
+  // Returning users will have profile set → route guard redirects them away from /login.
   useEffect(() => {
     if (!authLoading && session && !profile) {
-      // OAuth completed but no profile yet — new user needs invite code
       setStep('invite');
       setSigningIn(false);
     }
@@ -42,9 +45,9 @@ export default function Login() {
     setError('');
     try {
       await signInWithGoogle();
-      // Page redirects to Google — user returns via OAuth callback
-      // AuthContext then fires and either finds profile (returning user → dashboard)
-      // or sets profile=null (new user → useEffect above sets step='invite')
+      // Page redirects to Google → user returns via OAuth callback.
+      // AuthContext fires, sets session. If profile exists → route guard takes them to dashboard.
+      // If no profile → useEffect above sets step='invite'.
     } catch (err) {
       setSigningIn(false);
       setError(err.message);
@@ -60,15 +63,21 @@ export default function Login() {
     setError('');
 
     try {
-      // Step 1: validate the invite code against Supabase directly
+      // Step 1: validate the invite code against Supabase.
+      // Bug 4 fix: also fetch the `email` field and check email restrictions
+      // (email-restricted codes can only be used by the matching Google account).
       const { data, error: sbError } = await supabase
         .from('invites')
-        .select('id, code, used, expires_at, reusable')
+        .select('id, code, used, expires_at, reusable, email')
         .eq('code', code)
-        .single();
+        .maybeSingle(); // maybeSingle() returns null instead of throwing on 0 rows
 
-      if (sbError || !data) {
-        setError('Invalid invite code. Ask the admin for a valid code.');
+      if (sbError) {
+        setError('Could not verify invite code. Please try again.');
+        return;
+      }
+      if (!data) {
+        setError('Invalid invite code. Ask your inviter for a valid code.');
         return;
       }
       if (data.used && !data.reusable) {
@@ -76,19 +85,30 @@ export default function Login() {
         return;
       }
       if (data.expires_at && new Date(data.expires_at) < new Date()) {
-        setError('This invite code has expired.');
+        setError('This invite code has expired. Ask your inviter for a new one.');
         return;
       }
 
-      // Step 2: save and register via backend
-      localStorage.setItem('jobbus_invite_code', code);
+      // Bug 4 fix: enforce email restriction if the code was created for a specific address.
+      // At this point the user is already signed in via Google, so session.user.email is known.
+      if (data.email) {
+        const userEmail = session?.user?.email || '';
+        if (data.email.toLowerCase() !== userEmail.toLowerCase()) {
+          setError(`This invite code is restricted to ${data.email}. Please sign in with that Google account.`);
+          return;
+        }
+      }
 
-      // Trigger AuthContext to re-run loadOrCreateProfile with saved code
-      // The AuthContext already has the session — it just needs the saved code
-      window.location.reload();
+      // Step 2: register directly via backend — no page reload needed (Bug 2 fix).
+      // registerNewUser() calls api.register(), sets profile in context, and clears localStorage.
+      // On success, AuthContext profile is populated → route guard redirects to /onboarding.
+      // On failure, throws → caught below, error shown inline.
+      await registerNewUser(code);
 
     } catch (err) {
-      setError(err.message || 'Registration failed. Please try again.');
+      // registerNewUser threw — code was valid on Supabase but backend rejected it.
+      // (e.g. race condition where another user used a single-use code at the same moment)
+      setError(err.message || 'Registration failed. Please try again or contact support.');
     } finally {
       setRegistering(false);
     }
@@ -153,7 +173,8 @@ export default function Login() {
                 <>
                   <h2>Sign In</h2>
                   <p className="text-secondary">
-                    Continue with your Google account. New here? You'll be asked for an invite code after signing in.
+                    Continue with your Google account.
+                    New here? You'll be asked for an invite code after signing in.
                   </p>
                 </>
               )}
@@ -162,8 +183,8 @@ export default function Login() {
                 <>
                   <h2>You're almost in</h2>
                   <p className="text-secondary">
-                    You're signed in with Google but JobBus is invite-only.
-                    Enter your invite code to complete registration.
+                    You've signed in with Google. JobBus is invite-only —
+                    enter your invite code to complete registration.
                   </p>
                 </>
               )}
@@ -175,7 +196,7 @@ export default function Login() {
               </div>
             )}
 
-            {/* Step: SSO — shown to everyone by default */}
+            {/* Default step: Google SSO — shown to everyone */}
             {step === 'sso' && (
               <div className="login-form">
                 <button
@@ -199,12 +220,12 @@ export default function Login() {
                 </button>
 
                 <p className="text-center text-sm text-tertiary" style={{ marginTop: 16 }}>
-                  Already have an account? We'll sign you straight in.
+                  Already a member? We'll sign you straight in — no code needed.
                 </p>
               </div>
             )}
 
-            {/* Step: Invite — shown only to new users post-OAuth */}
+            {/* Invite step: only shown to new users after OAuth */}
             {step === 'invite' && (
               <form onSubmit={handleRegisterWithInvite} className="login-form">
                 <div className="input-group">
@@ -222,14 +243,19 @@ export default function Login() {
                     Don't have one? Ask the person who referred you.
                   </span>
                 </div>
+
                 <button
                   type="submit"
                   className="btn btn-primary btn-lg w-full"
                   disabled={registering || !inviteCode.trim()}
                 >
-                  {registering ? <span className="spinner" /> : <>Complete Registration <ArrowRight size={16} /></>}
+                  {registering
+                    ? <><span className="spinner" /> Registering…</>
+                    : <>Complete Registration <ArrowRight size={16} /></>
+                  }
                 </button>
 
+                {/* Allow switching accounts without getting stuck */}
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm w-full"
@@ -238,6 +264,7 @@ export default function Login() {
                     await supabase.auth.signOut();
                     setStep('sso');
                     setError('');
+                    setInviteCode('');
                   }}
                 >
                   ← Use a different Google account
