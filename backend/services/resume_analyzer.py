@@ -11,7 +11,6 @@ import json
 import httpx
 from typing import Optional
 
-import google.generativeai as genai
 from pypdf import PdfReader
 
 from models.schemas import ResumeProfile
@@ -127,10 +126,6 @@ Resume text:
         self.provider = provider
         self.api_key = api_key
 
-        if provider == "gemini":
-            genai.configure(api_key=api_key)
-            self._gemini_model = genai.GenerativeModel("gemini-2.0-flash")
-
     async def parse(self, resume_text: str) -> ResumeProfile:
         """Parse resume text into a structured profile using AI."""
         prompt = self.PARSE_PROMPT.format(resume_text=resume_text[:5000])
@@ -143,8 +138,18 @@ Resume text:
             return await self._parse_gemini(prompt)
 
     async def _parse_gemini(self, prompt: str) -> ResumeProfile:
-        """Parse using Google Gemini."""
-        response = self._gemini_model.generate_content(prompt)
+        """Parse using Google Gemini (lazy-imports SDK to avoid startup crash)."""
+        try:
+            import google.generativeai as genai  # noqa: PLC0415
+        except ImportError as exc:
+            raise RuntimeError(
+                "google-generativeai package is not installed. "
+                "Run: pip install google-generativeai"
+            ) from exc
+
+        genai.configure(api_key=self.api_key)
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        response = model.generate_content(prompt)
         return self._extract_profile(response.text)
 
     async def _parse_openai_compat(self, prompt: str) -> ResumeProfile:
