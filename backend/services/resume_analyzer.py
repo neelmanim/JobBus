@@ -99,13 +99,13 @@ class ResumeAnalyzer:
     PARSE_PROMPT = """You are a resume parser. Analyze the following resume text and extract a structured profile.
 
 Return ONLY valid JSON with this exact schema:
-{
+{{
     "name": "Full Name",
     "role": "Target role (e.g., Software Engineer)",
     "skills": ["skill1", "skill2", ...],
     "achievements": ["achievement1", "achievement2", ...],
     "email_context": "A concise 1-2 sentence summary of the candidate's background for use in outreach emails"
-}
+}}
 
 Rules:
 - Extract at most 5 achievements — pick the most impressive, quantified ones
@@ -138,19 +138,25 @@ Resume text:
             return await self._parse_gemini(prompt)
 
     async def _parse_gemini(self, prompt: str) -> ResumeProfile:
-        """Parse using Google Gemini (lazy-imports SDK to avoid startup crash)."""
-        try:
-            import google.generativeai as genai  # noqa: PLC0415
-        except ImportError as exc:
-            raise RuntimeError(
-                "google-generativeai package is not installed. "
-                "Run: pip install google-generativeai"
-            ) from exc
-
-        genai.configure(api_key=self.api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content(prompt)
-        return self._extract_profile(response.text)
+        """Parse using Google Gemini via REST API (no SDK dependency)."""
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"gemini-2.0-flash:generateContent?key={self.api_key}"
+        )
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"responseMimeType": "application/json"},
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(url, json=payload)
+        if resp.status_code != 200:
+            raise ValueError(f"Gemini API error {resp.status_code}: {resp.text[:300]}")
+        data = resp.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            raise ValueError("Gemini returned no candidates")
+        text = candidates[0]["content"]["parts"][0]["text"]
+        return self._extract_profile(text)
 
     async def _parse_openai_compat(self, prompt: str) -> ResumeProfile:
         """Parse using Groq or OpenAI (both use the OpenAI-compatible REST API)."""
