@@ -97,23 +97,48 @@ async def save_resume_text(
 ):
     """
     Accept raw resume text (paste from clipboard / onboarding wizard).
-    Stores as a plain-text profile row — AI parsing happens on next upload.
+    Runs AI parsing to extract name, role, skills, and achievements.
     """
     text = (payload.get("text") or "").strip()
     if len(text) < 50:
         raise HTTPException(status_code=400, detail="Resume text too short (min 50 characters)")
 
+    # Run AI parse — use whichever key the user has configured
+    try:
+        provider, api_key = await _get_any_ai_key(user["user_id"])
+        analyzer = ResumeAnalyzer(api_key=api_key, provider=provider)
+        profile = await analyzer.parse(text)
+    except HTTPException:
+        # No AI key configured — store raw text with minimal profile
+        profile = None
+
     supabase = get_supabase_admin()
-    row = {
-        "user_id": user["user_id"],
-        "raw_text": text,
-        "name": user.get("display_name", ""),
-        "role": "",
-        "skills": [],
-        "achievements": [],
-        "email_context": f"Resume text provided by user ({len(text)} chars)",
-        "file_path": None,
-    }
+
+    if profile and (profile.name or profile.role or profile.skills):
+        # AI parse succeeded — store rich profile
+        row = {
+            "user_id": user["user_id"],
+            "raw_text": text,
+            "name": profile.name or user.get("display_name", ""),
+            "role": profile.role,
+            "skills": profile.skills,
+            "achievements": profile.achievements,
+            "email_context": profile.email_context,
+            "file_path": None,
+        }
+    else:
+        # Fallback — store raw text without AI enrichment
+        row = {
+            "user_id": user["user_id"],
+            "raw_text": text,
+            "name": user.get("display_name", ""),
+            "role": "",
+            "skills": [],
+            "achievements": [],
+            "email_context": f"Resume text provided ({len(text)} chars — add an AI key in Settings to enable parsing)",
+            "file_path": None,
+        }
+
     result = supabase.table("resume_profiles").upsert(row).execute()
     saved = result.data[0] if result.data else row
     return ResumeProfile(
