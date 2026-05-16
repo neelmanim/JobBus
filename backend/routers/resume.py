@@ -24,14 +24,30 @@ from database import get_supabase_admin
 router = APIRouter(prefix="/api/resume", tags=["resume"])
 
 
-async def _get_gemini_key(user_id: str) -> str:
-    """Get user's decrypted Gemini API key."""
-    supabase = get_supabase_admin()
-    result = supabase.table("user_secrets").select("gemini_key_encrypted").eq("user_id", user_id).execute()
-    if not result.data or not result.data[0].get("gemini_key_encrypted"):
-        raise HTTPException(status_code=400, detail="Gemini API key not configured. Complete onboarding first.")
+async def _get_any_ai_key(user_id: str) -> tuple[str, str]:
+    """Get the first available AI key for this user.
+
+    Tries providers in priority order: groq → gemini → openai.
+    Returns (provider_name, decrypted_api_key).
+    Raises HTTP 400 if none are configured.
+    """
     cred_service = get_credential_service()
-    return cred_service._decrypt(result.data[0]["gemini_key_encrypted"])
+    priority = [
+        ("groq",   "groq_key"),
+        ("gemini", "gemini_key"),
+        ("openai", "openai_key"),
+    ]
+    for provider, field in priority:
+        key = cred_service.get_decrypted_field(user_id, field)
+        if key:
+            return provider, key
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "No AI key configured. Go to Settings → AI & Search and add a Groq key "
+            "(free) or any other provider key to enable resume analysis."
+        ),
+    )
 
 
 @router.post("/upload", response_model=ResumeUploadResponse)
@@ -50,9 +66,9 @@ async def upload_resume(
     except EmptyResume as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Parse with AI
-    api_key = await _get_gemini_key(user["user_id"])
-    analyzer = ResumeAnalyzer(api_key=api_key)
+    # Parse with AI — use whichever key the user has configured
+    provider, api_key = await _get_any_ai_key(user["user_id"])
+    analyzer = ResumeAnalyzer(api_key=api_key, provider=provider)
     profile = await analyzer.parse(text)
 
     # Save to storage

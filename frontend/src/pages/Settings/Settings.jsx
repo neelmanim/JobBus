@@ -49,6 +49,8 @@ function ProviderKeyRow({ prov, savedKeys, onSave, onTest, testingField }) {
   const [show, setShow]     = useState(false);
   const [saving, setSaving] = useState(false);
   const hasKey = !!savedKeys[prov.field];
+  // null = untested, true = ok, false = failed
+  const testResult = hasKey ? savedKeys[`${prov.field}_ok`] : undefined;
 
   async function save() {
     if (!val.trim()) return;
@@ -56,6 +58,8 @@ function ProviderKeyRow({ prov, savedKeys, onSave, onTest, testingField }) {
     await onSave(prov.field, val.trim());
     setVal('');
     setSaving(false);
+    // Automatically test after save so the status dot fills in immediately
+    onTest(prov.field);
   }
 
   return (
@@ -66,10 +70,22 @@ function ProviderKeyRow({ prov, savedKeys, onSave, onTest, testingField }) {
           <span className="provider-desc">{prov.desc}</span>
         </div>
         <div className="provider-status-group">
-          <StatusDot ok={hasKey ? savedKeys[`${prov.field}_ok`] : undefined} loading={testingField === prov.field} />
+          {hasKey && (
+            <span className={`provider-status-chip ${
+              testResult === true  ? 'chip-ok' :
+              testResult === false ? 'chip-fail' :
+              'chip-saved'
+            }`}>
+              <StatusDot ok={testResult} loading={testingField === prov.field} />
+              {testingField === prov.field ? 'Testing…' :
+               testResult === true  ? 'Connected' :
+               testResult === false ? 'Failed' :
+               'Saved'}
+            </span>
+          )}
           {hasKey && (
             <button className="btn btn-ghost btn-sm" onClick={() => onTest(prov.field)}
-              disabled={testingField === prov.field}>
+              disabled={testingField === prov.field} title="Test connection">
               <RefreshCw size={13} /> Test
             </button>
           )}
@@ -80,7 +96,7 @@ function ProviderKeyRow({ prov, savedKeys, onSave, onTest, testingField }) {
           <input
             className="input"
             type={show ? 'text' : 'password'}
-            placeholder={hasKey ? '••••••••••••••••  (saved)' : prov.placeholder}
+            placeholder={hasKey ? '••••••••••••••••  (tap Save to update)' : prov.placeholder}
             value={val}
             onChange={e => setVal(e.target.value)}
           />
@@ -185,9 +201,11 @@ export default function Settings() {
     setTestingField(field);
     try {
       const r = await api.testProviderKey(field);
-      if (r.success) toast.success(`${field.replace('_key', '')} connected ✓`);
-      else toast.error(`${field.replace('_key', '')} test failed — check your key`);
-      loadProviderStatus();
+      const label = field.replace('_key', '').replace('_url', '');
+      if (r.success) toast.success(`${label} connected ✓`);
+      else           toast.error(`${label} test failed — check your key`);
+      // Persist test result into providerStatus so chip updates immediately
+      setProviderStatus(prev => ({ ...prev, [`${field}_ok`]: r.success }));
     } catch (err) { toast.error(err.message); }
     finally { setTestingField(null); }
   }

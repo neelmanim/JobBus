@@ -1,5 +1,18 @@
 .resume-page { max-width: 800px; }
 
+.resume-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: var(--radius-md);
+  color: #fbbf24;
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--space-4);
+}
+
 .upload-zone {
   border: 2px dashed var(--border-default);
   border-radius: var(--radius-xl);

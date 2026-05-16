@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { useToast } from '../../contexts/ToastContext';
 import {
   Upload, FileText, CheckCircle, Sparkles, Briefcase,
-  Code, GraduationCap, Award, RefreshCw, X
+  Code, GraduationCap, Award, RefreshCw, AlertTriangle
 } from 'lucide-react';
 import './Resume.css';
 
@@ -14,8 +15,16 @@ export default function Resume() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [hasAiKey, setHasAiKey] = useState(true); // optimistic — show warning only once confirmed
 
-  useEffect(() => { loadProfile(); }, []);
+  useEffect(() => {
+    loadProfile();
+    // Check whether user has any AI key configured so we can show a helpful warning
+    api.getProviderStatus().then(status => {
+      const anyKey = status.groq_key || status.openai_key || status.gemini_key;
+      setHasAiKey(!!anyKey);
+    }).catch(() => {}); // non-critical
+  }, []);
 
   async function loadProfile() {
     try {
@@ -79,6 +88,20 @@ export default function Resume() {
         <h1>Resume</h1>
         <p>Your AI-analyzed career profile</p>
       </div>
+
+      {/* No-AI-key warning — shown only when confirmed no keys exist */}
+      {!hasAiKey && !profile && (
+        <div className="resume-warning">
+          <AlertTriangle size={16} />
+          <span>
+            Resume analysis needs an AI key.{' '}
+            <Link to="/settings" style={{ color: 'inherit', fontWeight: 600, textDecoration: 'underline' }}>
+              Go to Settings → AI &amp; Search
+            </Link>
+            {' '}and add a free Groq key to get started.
+          </span>
+        </div>
+      )}
 
       {/* Upload Zone */}
       {!profile ? (

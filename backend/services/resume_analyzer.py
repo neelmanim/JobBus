@@ -8,6 +8,7 @@ the resume into a structured profile.
 import io
 import re
 import json
+import httpx
 from typing import Optional
 
 import google.generativeai as genai
@@ -118,19 +119,62 @@ Resume text:
 {resume_text}
 ---"""
 
-    def __init__(self, api_key: str):
-        """Initialize with user's Gemini API key."""
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel("gemini-2.0-flash")
+    def __init__(self, api_key: str, provider: str = "gemini"):
+        """Initialize with a user's API key and provider name.
+
+        Supported providers: gemini (default), groq, openai.
+        """
+        self.provider = provider
+        self.api_key = api_key
+
+        if provider == "gemini":
+            genai.configure(api_key=api_key)
+            self._gemini_model = genai.GenerativeModel("gemini-2.0-flash")
 
     async def parse(self, resume_text: str) -> ResumeProfile:
         """Parse resume text into a structured profile using AI."""
-        prompt = self.PARSE_PROMPT.format(resume_text=resume_text[:5000])  # Cap input
+        prompt = self.PARSE_PROMPT.format(resume_text=resume_text[:5000])
 
-        response = self.model.generate_content(prompt)
-        raw = response.text.strip()
+        if self.provider == "gemini":
+            return await self._parse_gemini(prompt)
+        elif self.provider in ("groq", "openai"):
+            return await self._parse_openai_compat(prompt)
+        else:
+            return await self._parse_gemini(prompt)
 
-        # Extract JSON from response (handle markdown code blocks)
+    async def _parse_gemini(self, prompt: str) -> ResumeProfile:
+        """Parse using Google Gemini."""
+        response = self._gemini_model.generate_content(prompt)
+        return self._extract_profile(response.text)
+
+    async def _parse_openai_compat(self, prompt: str) -> ResumeProfile:
+        """Parse using Groq or OpenAI (both use the OpenAI-compatible REST API)."""
+        base_url = (
+            "https://api.groq.com/openai/v1" if self.provider == "groq"
+            else "https://api.openai.com/v1"
+        )
+        model = (
+            "llama-3.3-70b-versatile" if self.provider == "groq"
+            else "gpt-4o-mini"
+        )
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.2,
+                },
+            )
+            resp.raise_for_status()
+            text = resp.json()["choices"][0]["message"]["content"]
+        return self._extract_profile(text)
+
+    def _extract_profile(self, raw: str) -> ResumeProfile:
+        """Parse the JSON returned by any AI provider into a ResumeProfile."""
+        raw = raw.strip()
+        # Strip markdown code fences if present
         json_match = re.search(r"```json?\s*(.*?)\s*```", raw, re.DOTALL)
         if json_match:
             raw = json_match.group(1)
@@ -138,9 +182,8 @@ Resume text:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            # Fallback: try to extract basic info
             return ResumeProfile(
-                name=self._extract_name_fallback(resume_text),
+                name="",
                 role="",
                 skills=[],
                 achievements=[],

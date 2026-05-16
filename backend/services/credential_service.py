@@ -165,19 +165,24 @@ class CredentialService:
         return self._decrypt(raw)
 
     def get_provider_status(self, user_id: str) -> dict:
-        """Return which provider keys are configured (booleans, no secrets exposed)."""
+        """Return which provider keys are configured (booleans, no secrets exposed).
+
+        Keys are named to match the logical field names used by the frontend
+        (groq_key, openai_key, …) so that ProviderKeyRow's hasKey check works.
+        """
         supabase = get_supabase_admin()
         result = supabase.table("user_secrets").select("*").eq("user_id", user_id).execute()
 
         row = result.data[0] if result.data else {}
         return {
-            "groq": bool(row.get("groq_key_encrypted")),
-            "openai": bool(row.get("openai_key_encrypted")),
-            "gemini": bool(row.get("gemini_key_encrypted")),
-            "hunter": bool(row.get("hunter_key_encrypted")),
-            "apollo": bool(row.get("apollo_key_encrypted")),
-            "rocketreach": bool(row.get("rocketreach_key_encrypted")),
-            "ollama_url": row.get("ollama_base_url") or None,
+            # Field names must match the `prov.field` values in AI_PROVIDERS / SEARCH_PROVIDERS
+            "groq_key":        bool(row.get("groq_key_encrypted")),
+            "openai_key":      bool(row.get("openai_key_encrypted")),
+            "gemini_key":      bool(row.get("gemini_key_encrypted")),
+            "hunter_key":      bool(row.get("hunter_key_encrypted")),
+            "apollo_key":      bool(row.get("apollo_key_encrypted")),
+            "rocketreach_key": bool(row.get("rocketreach_key_encrypted")),
+            "ollama_url":      bool(row.get("ollama_base_url")),
         }
 
 
