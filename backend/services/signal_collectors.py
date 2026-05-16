@@ -2,17 +2,14 @@
 JobBus Backend — Signal Collectors.
 
 Gathers external signals for opportunity scoring:
-  - JSearch: Job postings from RapidAPI
-  - Funding: Company funding data (stub for now)
-  - Company: Company metadata (stub)
-
-Users can plug in their own API keys for higher rate limits.
+  - JSearch: Job postings from RapidAPI (premium, requires JSEARCH_API_KEY)
+  - Remotive: Free remote jobs — NO key needed (automatic fallback)
+  - FundingCollector / CompanyInfoCollector: stubs for future enrichment
 """
 
 from __future__ import annotations
 
-
-import os
+import re
 from typing import Optional
 import httpx
 
@@ -20,11 +17,7 @@ from config import get_settings
 
 
 class JSearchCollector:
-    """Collects job postings from JSearch (RapidAPI).
-    
-    Uses the default JobBus key or user's own key.
-    Free tier: 200 requests/month.
-    """
+    """Collects job postings from JSearch (RapidAPI). Requires JSEARCH_API_KEY."""
 
     BASE_URL = "https://jsearch.p.rapidapi.com"
 
@@ -36,6 +29,10 @@ class JSearchCollector:
             "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
         }
 
+    @property
+    def has_key(self) -> bool:
+        return bool(self.api_key)
+
     async def search_jobs(
         self,
         query: str,
@@ -45,19 +42,7 @@ class JSearchCollector:
         date_posted: str = "month",
         remote_only: bool = False,
     ) -> list[dict]:
-        """Search for job postings.
-
-        Args:
-            query: Job title or keywords
-            location: City or country
-            page: Page number (1-indexed)
-            num_pages: Number of pages to fetch
-            date_posted: Filter: all, today, 3days, week, month
-            remote_only: Filter for remote jobs
-
-        Returns:
-            List of normalized job dictionaries
-        """
+        """Search JSearch. Returns [] silently if no key configured."""
         if not self.api_key:
             return []
 
@@ -88,7 +73,6 @@ class JSearchCollector:
 
     @staticmethod
     def _normalize(job: dict) -> dict:
-        """Normalize JSearch response to internal format."""
         return {
             "job_url": job.get("job_apply_link") or job.get("job_google_link", ""),
             "role_title": job.get("job_title", ""),
@@ -108,16 +92,55 @@ class JSearchCollector:
         }
 
 
+class RemotiveCollector:
+    """Free remote jobs from Remotive.com — NO API key required.
+
+    This is the automatic fallback when JSearch key is absent.
+    Public API: https://remotive.com/api/remote-jobs
+    """
+
+    BASE_URL = "https://remotive.com/api/remote-jobs"
+
+    async def search_jobs(self, query: str, location: str = "") -> list[dict]:
+        """Search Remotive for remote jobs. Always works, no key needed."""
+        try:
+            params = {"search": query, "limit": 20}
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.get(self.BASE_URL, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+            jobs = data.get("jobs", [])
+            return [self._normalize(job) for job in jobs]
+
+        except httpx.HTTPError:
+            return []
+
+    @staticmethod
+    def _normalize(job: dict) -> dict:
+        return {
+            "job_url": job.get("url", ""),
+            "role_title": job.get("title", ""),
+            "company_name": job.get("company_name", ""),
+            "company_logo": job.get("company_logo"),
+            "location": job.get("candidate_required_location", "Remote"),
+            "is_remote": True,
+            "posted_at": job.get("publication_date"),
+            "description_snippet": _strip_html(job.get("description", ""))[:300],
+            "source": "remotive",
+            "signals": {
+                "hiring": True,
+                "role_match_keywords": _extract_keywords(
+                    job.get("title", "") + " " + str(job.get("tags", ""))
+                ),
+            },
+        }
+
+
 class FundingCollector:
-    """Collects company funding data (stub — uses free APIs when available)."""
+    """Collects company funding data (stub)."""
 
     async def check_funding(self, company_name: str) -> dict:
-        """Check if company has recent funding.
-        
-        Returns:
-            Dict with recently_funded, funding_round, amount, date
-        """
-        # Stub — in production, use Crunchbase or similar
         return {
             "recently_funded": False,
             "funding_round": None,
@@ -127,21 +150,40 @@ class FundingCollector:
 
 
 class CompanyInfoCollector:
-    """Collects company metadata (size, industry, etc.)."""
+    """Collects company metadata (stub)."""
 
     async def get_info(self, company_name: str) -> dict:
-        """Get company information.
-        
-        Returns:
-            Dict with size, industry, website, remote_friendly
-        """
-        # Stub — can integrate LinkedIn or Clearbit in future
         return {
             "company_size": None,
             "industry": None,
             "website": None,
             "remote_friendly": None,
         }
+
+
+async def search_jobs_auto(query: str, location: str = "") -> tuple[list[dict], str]:
+    """Waterfall job search: JSearch (premium key) → Remotive (free, always available).
+
+    Returns:
+        (list of normalized job dicts, source_name used)
+    """
+    jsearch = JSearchCollector()
+    if jsearch.has_key:
+        jobs = await jsearch.search_jobs(query=query, location=location)
+        if jobs:
+            return jobs, "jsearch"
+
+    # Free fallback — always available, no key needed
+    remotive = RemotiveCollector()
+    jobs = await remotive.search_jobs(query=query, location=location)
+    return jobs, "remotive"
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _strip_html(text: str) -> str:
+    """Lightweight HTML tag stripper for Remotive descriptions."""
+    return re.sub(r"<[^>]+>", " ", text).strip()
 
 
 def _extract_keywords(text: str) -> list[str]:

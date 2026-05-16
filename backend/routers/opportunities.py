@@ -6,14 +6,12 @@ Job search, scoring, and opportunity management.
 
 from __future__ import annotations
 
-
 from fastapi import APIRouter, Depends, HTTPException
 
 from middleware.auth_middleware import get_current_user
 from services.opportunity_scorer import OpportunityScorer
-from services.signal_collectors import JSearchCollector
+from services.signal_collectors import search_jobs_auto
 from services.resume_analyzer import get_resume_profile
-from models.schemas import OpportunityResponse, OpportunityScore
 from database import get_supabase_admin
 
 
@@ -28,30 +26,34 @@ async def search_opportunities(
     remote_only: bool = False,
     user: dict = Depends(get_current_user),
 ):
-    """Search for job opportunities and score them."""
-    # Get resume profile for scoring
+    """Search for job opportunities and score them.
+
+    Works without a resume — scoring uses the query as the role when no
+    resume profile exists.  Resume improves match quality but is not required.
+    """
+    # Resume improves scoring quality but is NOT a hard gate anymore.
     profile = get_resume_profile(user["user_id"])
-    if not profile:
-        raise HTTPException(status_code=400, detail="Upload a resume first")
-
-    # Collect signals
-    collector = JSearchCollector()
-    jobs = await collector.search_jobs(query=query, location=location, remote_only=remote_only)
-
-    if not jobs:
-        return {"opportunities": [], "message": "No opportunities found. Try different search terms."}
-
-    # Score each opportunity
     resume_dict = {
-        "name": profile.name,
-        "role": profile.role,
-        "skills": profile.skills,
-        "achievements": profile.achievements,
+        "name": profile.name if profile else "",
+        "role": profile.role if profile else query,   # fall back to search query
+        "skills": profile.skills if profile else [],
+        "achievements": profile.achievements if profile else [],
     }
 
+    # Waterfall: JSearch (premium) → Remotive (free, always available)
+    jobs, source = await search_jobs_auto(query=query, location=location)
+
+    if not jobs:
+        return {
+            "opportunities": [],
+            "source": source,
+            "message": "No opportunities found. Try different search terms.",
+        }
+
+    # Score each opportunity against the resume (or the query itself)
     scored = scorer.get_top_picks(jobs, resume_dict, max_count=20)
 
-    # Save opportunities to DB
+    # Persist opportunities to DB
     supabase = get_supabase_admin()
     saved = []
     for opp in scored:
@@ -68,12 +70,18 @@ async def search_opportunities(
                 score_result, opp.get("signals", {})
             ).value,
             "status": "discovered",
+            "location": opp.get("location", ""),
+            "is_remote": opp.get("is_remote", False),
+            "source": opp.get("source", source),
         }
-        result = supabase.table("opportunities").insert(data).execute()
+        result = supabase.table("opportunities").upsert(
+            data,
+            on_conflict="user_id,job_url",   # avoid duplicates for same posting
+        ).execute()
         if result.data:
             saved.append(result.data[0])
 
-    return {"opportunities": saved, "count": len(saved)}
+    return {"opportunities": saved, "count": len(saved), "source": source}
 
 
 @router.get("/")
@@ -81,27 +89,59 @@ async def list_opportunities(
     tier: str = None,
     user: dict = Depends(get_current_user),
 ):
-    """List saved opportunities."""
+    """List all saved opportunities for the current user, newest first."""
     supabase = get_supabase_admin()
-    query = supabase.table("opportunities").select("*").eq(
-        "user_id", user["user_id"]
-    ).order("score", desc=True)
+    q = (
+        supabase.table("opportunities")
+        .select("*")
+        .eq("user_id", user["user_id"])
+        .order("score", desc=True)
+    )
 
     if tier:
-        query = query.eq("tier", tier)
+        q = q.eq("tier", tier)
 
-    result = query.execute()
+    result = q.execute()
     return {"opportunities": result.data or []}
 
 
 @router.get("/{opportunity_id}")
 async def get_opportunity(opportunity_id: str, user: dict = Depends(get_current_user)):
-    """Get a single opportunity with full scoring details."""
+    """Get a single opportunity with full details."""
     supabase = get_supabase_admin()
-    result = supabase.table("opportunities").select("*").eq(
-        "id", opportunity_id
-    ).eq("user_id", user["user_id"]).execute()
+    result = (
+        supabase.table("opportunities")
+        .select("*")
+        .eq("id", opportunity_id)
+        .eq("user_id", user["user_id"])
+        .execute()
+    )
 
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Opportunity not found")
+    return result.data[0]
+
+
+@router.patch("/{opportunity_id}/status")
+async def update_opportunity_status(
+    opportunity_id: str,
+    body: dict,
+    user: dict = Depends(get_current_user),
+):
+    """Update opportunity status (discovered → applied → interviewing → offer/rejected)."""
+    allowed = {"discovered", "saved", "applied", "interviewing", "offer", "rejected"}
+    status = body.get("status", "")
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Allowed: {allowed}")
+
+    supabase = get_supabase_admin()
+    result = (
+        supabase.table("opportunities")
+        .update({"status": status})
+        .eq("id", opportunity_id)
+        .eq("user_id", user["user_id"])
+        .execute()
+    )
     if not result.data:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     return result.data[0]

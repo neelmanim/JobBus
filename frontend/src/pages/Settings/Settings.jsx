@@ -112,14 +112,14 @@ function ProviderKeyRow({ prov, savedKeys, onSave, onTest, testingField }) {
 }
 
 export default function Settings() {
-  const { profile, refreshProfile } = useAuth();
+  const { profile, refreshProfile, patchProfile } = useAuth();
   const toast = useToast();
   const [tab, setTab] = useState('smtp');
 
   // ── SMTP ─────────────────────────────────────────────────
   const [smtpStatus, setSmtpStatus] = useState(null);
   const [showSmtpForm, setShowSmtpForm] = useState(false);
-  const [smtpForm, setSmtpForm] = useState({ email: '', password: '', smtp_host: 'smtp.gmail.com', smtp_port: 587 });
+  const [smtpForm, setSmtpForm] = useState({ smtp_user: '', smtp_pass: '', smtp_host: 'smtp.gmail.com', smtp_port: 587, sender_name: '' });
   const [showPassword, setShowPassword] = useState(false);
   const [savingSmtp, setSavingSmtp] = useState(false);
   const [testEmail, setTestEmail] = useState('');
@@ -231,8 +231,9 @@ export default function Settings() {
   async function handleSaveAIPref() {
     setSavingPref(true);
     try {
-      await api.setAIProvider({ provider: aiProvider, model: aiModel });
-      await api.setSearchProvider({ provider: searchProvider });
+      // Backend expects { ai_provider, model } and { search_provider }
+      await api.setAIProvider({ ai_provider: aiProvider, model: aiModel });
+      await api.setSearchProvider({ search_provider: searchProvider });
       toast.success('Provider preferences saved');
     } catch (err) { toast.error(err.message); }
     finally { setSavingPref(false); }
@@ -259,8 +260,13 @@ export default function Settings() {
 
   async function handleModeToggle() {
     const newMode = profile?.mode === 'advanced' ? 'beginner' : 'advanced';
-    try { await api.updateMode(newMode); await refreshProfile(); toast.success(`Switched to ${newMode} mode`); }
-    catch (err) { toast.error(err.message); }
+    try {
+      const updatedProfile = await api.updateMode(newMode);
+      // Patch in-memory immediately so the button label flips at once.
+      // The backend returns the full updated profile, so no extra GET needed.
+      patchProfile(updatedProfile);
+      toast.success(`Switched to ${newMode} mode`);
+    } catch (err) { toast.error(err.message); }
   }
 
   return (
@@ -330,14 +336,12 @@ export default function Settings() {
                 <div className="input-group">
                   <label className="input-label">Email Address</label>
                   <input className="input" type="email" placeholder="your@gmail.com"
-                    value={smtpForm.email} onChange={e => setSmtpForm(p => ({ ...p, email: e.target.value }))} required />
+                    value={smtpForm.smtp_user} onChange={e => setSmtpForm(p => ({ ...p, smtp_user: e.target.value }))} required />
                 </div>
                 <div className="input-group">
                   <label className="input-label">App Password</label>
                   <div className="password-input">
-                    <input className="input" type={showPassword ? 'text' : 'password'}
-                      placeholder="xxxx xxxx xxxx xxxx"
-                      value={smtpForm.password} onChange={e => setSmtpForm(p => ({ ...p, password: e.target.value }))} required />
+                      value={smtpForm.smtp_pass} onChange={e => setSmtpForm(p => ({ ...p, smtp_pass: e.target.value }))} required />
                     <button type="button" className="password-toggle" onClick={() => setShowPassword(s => !s)}>
                       {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>

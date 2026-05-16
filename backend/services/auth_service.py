@@ -216,9 +216,15 @@ class UserService:
     def update_mode(user_id: str, mode: UserMode) -> UserProfileResponse:
         """Toggle user mode between beginner and advanced."""
         supabase = get_supabase_admin()
-        result = supabase.table("user_profiles").update(
+        # Perform the update
+        supabase.table("user_profiles").update(
             {"mode": mode.value}
         ).eq("user_id", user_id).execute()
+        # Re-fetch the full row — Supabase .update() may return a partial row
+        # which causes _row_to_response to crash on missing columns like `created_at`.
+        result = supabase.table("user_profiles").select("*").eq("user_id", user_id).execute()
+        if not result.data:
+            raise ValueError(f"User profile not found after mode update: {user_id}")
         return UserService._row_to_response(result.data[0])
 
     @staticmethod

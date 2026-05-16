@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api';
+import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import {
   Search, MapPin, Target, TrendingUp, Building2,
   Briefcase, ExternalLink, Sparkles, Zap, X,
-  ChevronRight, Users, Globe, ArrowRight, Loader
+  ChevronRight, Users, Globe, ArrowRight, Loader,
+  RefreshCw,
 } from 'lucide-react';
 import './Opportunities.css';
 
@@ -183,28 +185,70 @@ function getTierLabel(score) {
 /* ── Main Page ──────────────────────────────────────────────── */
 export default function Opportunities() {
   const toast = useToast();
+  const { profile } = useAuth();
+
   const [query, setQuery]             = useState('');
   const [location, setLocation]       = useState('');
   const [opportunities, setOpportunities] = useState([]);
   const [loading, setLoading]         = useState(false);
+  const [autoSearched, setAutoSearched] = useState(false);
   const [searched, setSearched]       = useState(false);
+  const [source, setSource]           = useState('');
   const [selectedOpp, setSelectedOpp] = useState(null);
-  const [outreachOpp, setOutreachOpp] = useState(null);  // which card opened the modal
+  const [outreachOpp, setOutreachOpp] = useState(null);
 
-  async function handleSearch(e) {
-    e.preventDefault();
-    if (!query.trim()) return;
+  // ── Auto-load: on mount, fetch previously saved opportunities first.
+  // If none exist AND we have a resume role, trigger an automatic search.
+  useEffect(() => {
+    async function init() {
+      try {
+        // 1. Load previously saved opportunities
+        const saved = await api.listOpportunities();
+        const list = saved?.opportunities || [];
+
+        if (list.length > 0) {
+          setOpportunities(list);
+          setSearched(true);
+          return; // We have results, no need to auto-search
+        }
+
+        // 2. No saved opps — auto-search using resume role or a generic default
+        const autoQuery = profile?.role || 'software engineer';
+        setQuery(autoQuery);
+        await runSearch(autoQuery, '');
+      } catch (err) {
+        // Silently ignore — user can still search manually
+      }
+    }
+    if (!autoSearched) {
+      setAutoSearched(true);
+      init();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function runSearch(q, loc) {
+    if (!q.trim()) return;
     setLoading(true);
     setSearched(true);
     try {
-      const results = await api.searchOpportunities(query, location);
-      setOpportunities(Array.isArray(results) ? results : results?.opportunities || []);
+      const results = await api.searchOpportunities(q.trim(), loc);
+      const list = Array.isArray(results) ? results : results?.opportunities || [];
+      setOpportunities(list);
+      setSource(results?.source || '');
+      if (list.length === 0) {
+        toast.info('No opportunities found — try broader search terms');
+      }
     } catch (err) {
       toast.error(err.message || 'Search failed');
       setOpportunities([]);
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleSearch(e) {
+    e.preventDefault();
+    await runSearch(query, location);
   }
 
   return (
@@ -239,7 +283,24 @@ export default function Opportunities() {
         <button type="submit" className="btn btn-primary" disabled={loading || !query.trim()}>
           {loading ? <span className="spinner" /> : <><Search size={16} /> Search</>}
         </button>
+        {opportunities.length > 0 && !loading && (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            title="Refresh search"
+            onClick={() => runSearch(query, location)}
+          >
+            <RefreshCw size={16} />
+          </button>
+        )}
       </form>
+
+      {/* Source badge */}
+      {source && !loading && opportunities.length > 0 && (
+        <p className="text-xs text-secondary" style={{ marginBottom: 8 }}>
+          Results via <strong>{source === 'remotive' ? 'Remotive (remote jobs)' : 'JSearch'}</strong>
+        </p>
+      )}
 
       {/* Results */}
       {loading ? (
@@ -277,6 +338,9 @@ export default function Opportunities() {
                         {opp.location || opp.city}
                       </span>
                     )}
+                    {opp.is_remote && (
+                      <span className="opp-remote-badge">Remote</span>
+                    )}
                   </div>
                 </div>
 
@@ -291,7 +355,10 @@ export default function Opportunities() {
               {/* Signals */}
               {opp.signals && (
                 <div className="signal-grid">
-                  {opp.signals.map((signal, si) => (
+                  {(Array.isArray(opp.signals)
+                    ? opp.signals
+                    : Object.entries(opp.signals).map(([k, v]) => ({ description: `${k}: ${v}` }))
+                  ).map((signal, si) => (
                     <div key={si} className="signal-chip">
                       <span className="signal-check">✓</span>
                       <span>{signal.description || signal}</span>
@@ -316,8 +383,8 @@ export default function Opportunities() {
                       <span>Salary: {opp.salary}</span>
                     </div>
                   )}
-                  {opp.url && (
-                    <a href={opp.url} target="_blank" rel="noopener noreferrer"
+                  {(opp.url || opp.job_url) && (
+                    <a href={opp.url || opp.job_url} target="_blank" rel="noopener noreferrer"
                       className="btn btn-ghost btn-sm"
                       onClick={e => e.stopPropagation()}>
                       <ExternalLink size={14} /> View Listing
@@ -348,8 +415,8 @@ export default function Opportunities() {
       ) : (
         <div className="empty-state">
           <div className="empty-icon"><Sparkles size={32} /></div>
-          <h3>Search for opportunities</h3>
-          <p>Enter a job title or skill to discover scored opportunities with hiring signals.</p>
+          <h3>Searching for opportunities…</h3>
+          <p>Hang tight while we find the best matches.</p>
         </div>
       )}
 

@@ -33,8 +33,10 @@ export default function Dashboard() {
         api.getProviderStatus(),
       ]);
 
-      if (campaigns.status === 'fulfilled' && Array.isArray(campaigns.value)) {
-        const c = campaigns.value;
+      if (campaigns.status === 'fulfilled') {
+        const raw = campaigns.value;
+        // Backend returns array directly from engine.list_campaigns
+        const c = Array.isArray(raw) ? raw : (raw?.campaigns || []);
         setStats(prev => ({
           ...prev,
           campaigns: c.length,
@@ -42,11 +44,21 @@ export default function Dashboard() {
           replies: c.reduce((sum, x) => sum + (x.total_replies || 0), 0),
         }));
       }
+
+      // Load opportunity count separately
+      try {
+        const opps = await api.listOpportunities();
+        const oppList = opps?.opportunities || [];
+        setStats(prev => ({ ...prev, opportunities: oppList.length }));
+      } catch { /* non-critical */ }
+
       if (resume.status === 'fulfilled' && resume.value) setResumeReady(true);
-      if (smtp.status === 'fulfilled' && smtp.value?.connected) setSmtpReady(true);
+      // Backend returns { configured: bool } — not { connected: bool }
+      if (smtp.status === 'fulfilled' && smtp.value?.configured) setSmtpReady(true);
       if (providers.status === 'fulfilled') {
         const p = providers.value;
-        setProviderReady(p?.groq?.active || p?.openai?.active || p?.gemini?.active ||
+        // Backend returns flat { groq_key: true, openai_key: true, ... }
+        setProviderReady(p?.groq_key || p?.openai_key || p?.gemini_key ||
           p?.system_groq_available || false);
       }
     } catch (err) {

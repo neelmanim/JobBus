@@ -53,7 +53,7 @@ export default function Onboarding() {
     if (!smtpEmail || !smtpPassword) { toast.error('Enter your Gmail and App Password'); return; }
     setSaving(true);
     try {
-      await api.saveSmtpCredentials({ email: smtpEmail, password: smtpPassword });
+      await api.saveSmtpCredentials({ smtp_user: smtpEmail, smtp_pass: smtpPassword });
       setSmtpSaved(true);
       toast.success('Email connected!');
     } catch (err) {
@@ -67,13 +67,13 @@ export default function Onboarding() {
     setSaving(true);
     try {
       const saves = [];
-      if (groqKey)    saves.push(api.saveProviderKey('groq',       groqKey));
-      if (openaiKey)  saves.push(api.saveProviderKey('openai',     openaiKey));
-      if (geminiKey)  saves.push(api.saveProviderKey('gemini',     geminiKey));
-      if (hunterKey)  saves.push(api.saveProviderKey('hunter',     hunterKey));
-      if (apolloKey)  saves.push(api.saveProviderKey('apollo',     apolloKey));
-      saves.push(api.setAiProvider(aiProvider));
-      saves.push(api.setSearchProvider(searchProvider));
+      if (groqKey)    saves.push(api.saveProviderKey('groq_key',   groqKey));
+      if (openaiKey)  saves.push(api.saveProviderKey('openai_key', openaiKey));
+      if (geminiKey)  saves.push(api.saveProviderKey('gemini_key', geminiKey));
+      if (hunterKey)  saves.push(api.saveProviderKey('hunter_key', hunterKey));
+      if (apolloKey)  saves.push(api.saveProviderKey('apollo_key', apolloKey));
+      saves.push(api.setAiProvider({ ai_provider: aiProvider }));
+      saves.push(api.setSearchProvider({ search_provider: searchProvider }));
       await Promise.all(saves);
       setProvidersSaved(true);
       toast.success('Providers saved!');

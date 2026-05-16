@@ -131,6 +131,15 @@ export function AuthProvider({ children }) {
   }
 
   /**
+   * Patch profile in-memory from an API response object.
+   * Use this when an endpoint already returns the updated profile —
+   * avoids a redundant GET /me round-trip and makes UI updates instant.
+   */
+  function patchProfile(updatedProfile) {
+    setProfile(prev => ({ ...prev, ...updatedProfile }));
+  }
+
+  /**
    * Bug 2 fix: Register a new user directly without a page reload.
    *
    * The Login page calls this after validating the invite code client-side.
@@ -186,6 +195,7 @@ export function AuthProvider({ children }) {
     signOut,
     registerNewUser,   // exposed for Login page (Bug 2 fix)
     refreshProfile: isDemoMode ? () => Promise.resolve() : loadProfile,
+    patchProfile: isDemoMode ? () => {} : patchProfile,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
