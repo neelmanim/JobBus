@@ -44,6 +44,7 @@ class SMTPSender:
         subject: str,
         body: str,
         reply_to: Optional[str] = None,
+        to_name: Optional[str] = None,
     ) -> SendResult:
         """Send a single email via the user's SMTP credentials."""
         # Rate limit check
@@ -74,7 +75,7 @@ class SMTPSender:
         # Build email
         msg = MIMEMultipart("alternative")
         msg["From"] = f"{creds.get('sender_name', '')} <{creds['smtp_user']}>"
-        msg["To"] = to_email
+        msg["To"] = f"{to_name} <{to_email}>" if to_name else to_email
         msg["Subject"] = subject
         if reply_to:
             msg["Reply-To"] = reply_to

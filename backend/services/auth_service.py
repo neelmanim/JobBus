@@ -35,21 +35,30 @@ class InviteService:
         created_by: str,
         note: Optional[str] = None,
         expires_in_days: Optional[int] = None,
+        reusable: bool = False,
+        custom_code: Optional[str] = None,
     ) -> InviteCodeResponse:
-        """Create a single invite code."""
+        """Create a single invite code.
+
+        Args:
+            reusable: If True, the code is never marked as used and can be
+                      validated any number of times (ideal for admin/dev codes).
+            custom_code: If provided, use this value instead of a random code.
+        """
         supabase = get_supabase_admin()
 
         expires_at = None
         if expires_in_days is not None:
             expires_at = (datetime.now(timezone.utc) + timedelta(days=expires_in_days)).isoformat()
 
-        code = InviteService._generate_code()
+        code = custom_code.upper().strip() if custom_code else InviteService._generate_code()
         data = {
             "code": code,
             "created_by": created_by,
             "used": False,
             "note": note,
             "expires_at": expires_at,
+            "reusable": reusable,
         }
 
         result = supabase.table("invites").insert(data).execute()
@@ -80,7 +89,11 @@ class InviteService:
 
     @staticmethod
     def validate(code: Optional[str]) -> InviteValidationResult:
-        """Validate an invite code for signup."""
+        """Validate an invite code for signup.
+
+        Reusable codes (reusable=True) bypass the `used` check so they can
+        be shared across multiple test/admin registrations without expiring.
+        """
         if not code:
             return InviteValidationResult(valid=False, reason="No invite code provided")
 
@@ -91,8 +104,10 @@ class InviteService:
             return InviteValidationResult(valid=False, reason="Invite code not found")
 
         invite = result.data[0]
+        is_reusable = invite.get("reusable", False)
 
-        if invite["used"]:
+        # Reusable codes are never blocked by the used flag
+        if invite["used"] and not is_reusable:
             return InviteValidationResult(valid=False, reason="Invite code already used")
 
         if invite.get("expires_at"):
@@ -104,8 +119,15 @@ class InviteService:
 
     @staticmethod
     def mark_used(code: str, used_by: str) -> None:
-        """Mark an invite code as used."""
+        """Mark an invite code as used.
+
+        Reusable codes are never marked as used, so they remain valid
+        indefinitely for subsequent test/admin registrations.
+        """
         supabase = get_supabase_admin()
+        result = supabase.table("invites").select("reusable").eq("code", code.upper().strip()).execute()
+        if result.data and result.data[0].get("reusable", False):
+            return  # Never consume a reusable code
         supabase.table("invites").update({
             "used": True,
             "used_by": used_by,

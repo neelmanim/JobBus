@@ -8,61 +8,90 @@ import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 
-
-def _make_app():
-    from main import create_app
-    return create_app()
+from tests.conftest import make_client, auth_headers
 
 
-@pytest.fixture(autouse=True)
-def mock_auth():
-    with patch("middleware.auth_middleware.get_current_user", return_value={"user_id": "u1"}):
-        yield
-
+# ─────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────
 
 def _db_mock_campaign(supabase_mock, sandbox_mode=True, status="draft"):
-    """Helper to mock a campaign DB row."""
+    """Helper to mock a campaign DB row.
+    Router queries: .table("campaigns").select("*").eq("id", ...).eq("user_id", ...).single().execute()
+    """
     campaign_data = {
         "id": "camp1", "user_id": "u1", "name": "Test Campaign",
         "opportunity_id": "opp1", "sandbox_mode": sandbox_mode,
         "status": status, "description": "Test outreach",
     }
     supabase_mock.return_value.table.return_value.select.return_value \
-        .eq.return_value.single.return_value.execute.return_value.data = campaign_data
+        .eq.return_value.eq.return_value.single.return_value.execute.return_value.data = campaign_data
     return campaign_data
 
 
+# ─────────────────────────────────────────────────────────────
+# Draft Generation
+# ─────────────────────────────────────────────────────────────
+
 class TestGenerateDrafts:
-    @pytest.mark.asyncio
-    async def test_generates_drafts_for_contacts(self):
+    def test_generates_drafts_for_contacts(self):
         with patch("routers.campaigns.get_supabase_admin") as mock_db, \
              patch("routers.campaigns.get_ai_provider") as mock_ai_factory:
-            _db_mock_campaign(mock_db)
-            table = mock_db.return_value.table.return_value
-            # contacts query
-            table.select.return_value.eq.return_value.eq.return_value \
-                .execute.return_value.data = [
-                {
-                    "id": "c1", "first_name": "Jane", "last_name": "Doe",
-                    "email": "jane@stripe.com", "title": "EM", "company": "Stripe",
-                    "persona_type": "hiring_manager", "opportunity_id": "opp1",
-                }
-            ]
-            # existing drafts check (none)
-            table.select.return_value.eq.return_value.execute.return_value.data = []
-            # user profile
-            table.select.return_value.eq.return_value.single.return_value \
-                .execute.return_value.data = {"signature_name": "Neel"}
-            # opportunity
-            table.select.return_value.eq.return_value.single.return_value \
-                .execute.return_value.data = {"id": "opp1", "role": "Backend Eng"}
-            # draft insert
-            table.insert.return_value.execute.return_value.data = [{"id": "d1"}]
+            contact_row = {
+                "id": "c1", "first_name": "Jane", "last_name": "Doe",
+                "email": "jane@stripe.com", "title": "EM", "company": "Stripe",
+                "persona_type": "hiring_manager", "opportunity_id": "opp1",
+            }
+            campaign_row = {
+                "id": "camp1", "user_id": "u1", "name": "Test Campaign",
+                "opportunity_id": "opp1", "sandbox_mode": True,
+                "status": "draft", "description": "Test outreach",
+            }
+            profile_row = {"signature_name": "Neel", "signature_title": None,
+                           "signature_linkedin": None, "custom_instructions": None}
+            opp_row = {"id": "opp1", "role": "Backend Eng", "company": "Stripe"}
 
+            # Each call to .execute() returns the next item in order:
+            # 1. Campaign lookup (.single().execute())
+            # 2. Contacts query (.execute())
+            # 3. Approved drafts check (.execute())
+            # 4. User profile (.single().execute())
+            # 5. Opportunity (.single().execute())
+            # 6. Draft insert (.insert().execute())
+            execute_results = [
+                MagicMock(data=campaign_row),   # 1 campaign single
+                MagicMock(data=[contact_row]),  # 2 contacts list
+                MagicMock(data=[]),             # 3 approved drafts (none)
+                MagicMock(data=profile_row),    # 4 user profile single
+                MagicMock(data=opp_row),        # 5 opportunity single
+            ]
+
+            call_count = [0]
+            def execute_side_effect():
+                idx = call_count[0]
+                call_count[0] += 1
+                if idx < len(execute_results):
+                    return execute_results[idx]
+                return MagicMock(data=[])
+
+            # Wire every .execute() to our side_effect
+            mock_db.return_value.table.return_value.select.return_value \
+                .eq.return_value.eq.return_value.single.return_value \
+                .execute.side_effect = execute_side_effect
+            mock_db.return_value.table.return_value.select.return_value \
+                .eq.return_value.eq.return_value.execute.side_effect = execute_side_effect
+            mock_db.return_value.table.return_value.select.return_value \
+                .eq.return_value.single.return_value \
+                .execute.side_effect = execute_side_effect
+            mock_db.return_value.table.return_value.select.return_value \
+                .eq.return_value.execute.side_effect = execute_side_effect
+            mock_db.return_value.table.return_value.insert \
+                .return_value.execute.return_value.data = [{"id": "d1"}]
+
+            from providers.ai.base import GenerationResult
             mock_ai = AsyncMock()
             mock_ai.provider_name = "groq"
             mock_ai.model = "llama-3.1-8b-instant"
-            from providers.ai.base import GenerationResult
             mock_ai.generate = AsyncMock(return_value=GenerationResult(
                 text="Subject: Hi Jane\n\nHello! I admire Stripe's infrastructure...",
                 model="llama-3.1-8b-instant",
@@ -70,10 +99,10 @@ class TestGenerateDrafts:
             ))
             mock_ai_factory.return_value = mock_ai
 
-            client = TestClient(_make_app())
+            client = make_client()
             resp = client.post("/api/campaigns/camp1/generate-drafts",
                 json={"regenerate": False, "tone": "professional"},
-                headers={"Authorization": "Bearer t"})
+                headers=auth_headers())
             assert resp.status_code == 200
             assert resp.json()["generated"] >= 0
 
@@ -86,13 +115,16 @@ class TestGenerateDrafts:
                 .execute.return_value.data = []
             table.select.return_value.eq.return_value.execute.return_value.data = []
 
-            client = TestClient(_make_app())
-            resp = client.post("/api/campaigns/camp1/generate-drafts",
+            resp = make_client().post("/api/campaigns/camp1/generate-drafts",
                 json={"regenerate": False},
-                headers={"Authorization": "Bearer t"})
+                headers=auth_headers())
             assert resp.status_code == 400
             assert "No contacts" in resp.json()["detail"]
 
+
+# ─────────────────────────────────────────────────────────────
+# Draft Approval
+# ─────────────────────────────────────────────────────────────
 
 class TestDraftApproval:
     def test_approve_draft(self):
@@ -104,10 +136,9 @@ class TestDraftApproval:
                 "subject": "Hi", "body": "Hello!"
             }
             table.update.return_value.eq.return_value.execute.return_value = None
-            client = TestClient(_make_app())
-            resp = client.post("/api/campaigns/camp1/drafts/approve",
+            resp = make_client().post("/api/campaigns/camp1/drafts/approve",
                 json={"draft_id": "d1", "action": "approve"},
-                headers={"Authorization": "Bearer t"})
+                headers=auth_headers())
             assert resp.status_code == 200
             assert resp.json()["action"] == "approve"
 
@@ -120,10 +151,9 @@ class TestDraftApproval:
                 "subject": "Hi", "body": "Hello!"
             }
             table.update.return_value.eq.return_value.execute.return_value = None
-            client = TestClient(_make_app())
-            resp = client.post("/api/campaigns/camp1/drafts/approve",
+            resp = make_client().post("/api/campaigns/camp1/drafts/approve",
                 json={"draft_id": "d1", "action": "reject", "rejection_reason": "Too generic"},
-                headers={"Authorization": "Bearer t"})
+                headers=auth_headers())
             assert resp.status_code == 200
             assert resp.json()["action"] == "reject"
 
@@ -135,21 +165,23 @@ class TestDraftApproval:
                 "id": "d1", "campaign_id": "camp1", "status": "draft",
                 "subject": "Hi", "body": "Hello!"
             }
-            client = TestClient(_make_app())
-            resp = client.post("/api/campaigns/camp1/drafts/approve",
+            resp = make_client().post("/api/campaigns/camp1/drafts/approve",
                 json={"draft_id": "d1", "action": "blast"},
-                headers={"Authorization": "Bearer t"})
+                headers=auth_headers())
             assert resp.status_code == 422
 
+
+# ─────────────────────────────────────────────────────────────
+# Sandbox Safety Gate
+# ─────────────────────────────────────────────────────────────
 
 class TestSandboxSafetyGate:
     def test_blocks_when_sandbox_on(self):
         with patch("routers.campaigns.get_supabase_admin") as mock_db:
             _db_mock_campaign(mock_db, sandbox_mode=True)
-            client = TestClient(_make_app())
-            resp = client.post("/api/campaigns/camp1/send/start",
+            resp = make_client().post("/api/campaigns/camp1/send/start",
                 json={"dry_run": False},
-                headers={"Authorization": "Bearer t"})
+                headers=auth_headers())
             assert resp.status_code == 200
             body = resp.json()
             assert body["blocked"] is True
@@ -161,10 +193,9 @@ class TestSandboxSafetyGate:
             table = mock_db.return_value.table.return_value
             table.select.return_value.eq.return_value.eq.return_value \
                 .execute.return_value.count = 3
-            client = TestClient(_make_app())
-            resp = client.post("/api/campaigns/camp1/send/start",
+            resp = make_client().post("/api/campaigns/camp1/send/start",
                 json={"dry_run": True},
-                headers={"Authorization": "Bearer t"})
+                headers=auth_headers())
             assert resp.status_code == 200
             assert resp.json()["dry_run"] is True
 
@@ -172,14 +203,22 @@ class TestSandboxSafetyGate:
         with patch("routers.campaigns.get_supabase_admin") as mock_db, \
              patch("routers.campaigns.get_credential_service") as mock_cred:
             _db_mock_campaign(mock_db, sandbox_mode=False)
+            # Also mock the dry_run drafts count so we get past that gate
+            mock_db.return_value.table.return_value.select.return_value \
+                .eq.return_value.eq.return_value.execute.return_value.count = 3
+            # SMTP creds raise
             mock_cred.return_value.get_decrypted.side_effect = Exception("No SMTP")
-            client = TestClient(_make_app())
-            resp = client.post("/api/campaigns/camp1/send/start",
-                json={"dry_run": False},
-                headers={"Authorization": "Bearer t"})
+            with make_client() as client:
+                resp = client.post("/api/campaigns/camp1/send/start",
+                    json={"dry_run": False},
+                    headers=auth_headers())
             assert resp.status_code == 400
             assert "SMTP" in resp.json()["detail"]
 
+
+# ─────────────────────────────────────────────────────────────
+# Pause / Resume / Stop
+# ─────────────────────────────────────────────────────────────
 
 class TestCampaignPauseResumeStop:
     def test_pause(self):
@@ -188,8 +227,8 @@ class TestCampaignPauseResumeStop:
             table.select.return_value.eq.return_value.eq.return_value \
                 .single.return_value.execute.return_value.data = {"id": "camp1"}
             table.update.return_value.eq.return_value.execute.return_value = None
-            resp = TestClient(_make_app()).post("/api/campaigns/camp1/send/pause",
-                headers={"Authorization": "Bearer t"})
+            resp = make_client().post("/api/campaigns/camp1/send/pause",
+                headers=auth_headers())
             assert resp.status_code == 200
             assert resp.json()["status"] == "paused"
 
@@ -200,29 +239,41 @@ class TestCampaignPauseResumeStop:
                 .single.return_value.execute.return_value.data = {"id": "camp1"}
             table.update.return_value.eq.return_value.execute.return_value = None
             table.update.return_value.eq.return_value.eq.return_value.execute.return_value = None
-            resp = TestClient(_make_app()).post("/api/campaigns/camp1/send/stop",
-                headers={"Authorization": "Bearer t"})
+            resp = make_client().post("/api/campaigns/camp1/send/stop",
+                headers=auth_headers())
             assert resp.status_code == 200
             assert resp.json()["status"] == "completed"
 
+
+# ─────────────────────────────────────────────────────────────
+# Outcomes
+# ─────────────────────────────────────────────────────────────
 
 class TestOutcomes:
     def test_record_valid_outcome(self):
         with patch("routers.campaigns.get_supabase_admin") as mock_db:
             table = mock_db.return_value.table.return_value
             table.update.return_value.eq.return_value.eq.return_value.execute.return_value = None
-            resp = TestClient(_make_app()).post("/api/campaigns/camp1/outcomes",
+            resp = make_client().post("/api/campaigns/camp1/outcomes",
                 json={"contact_id": "c1", "outcome": "replied"},
-                headers={"Authorization": "Bearer t"})
+                headers=auth_headers())
             assert resp.status_code == 200
             assert resp.json()["outcome"] == "replied"
 
     def test_rejects_invalid_outcome(self):
-        resp = TestClient(_make_app()).post("/api/campaigns/camp1/outcomes",
-            json={"contact_id": "c1", "outcome": "ghosted"},
-            headers={"Authorization": "Bearer t"})
+        # "ghosted" is not in the valid set — endpoint raises 422
+        # Must mock DB since the endpoint calls get_supabase_admin() before validation
+        with patch("routers.campaigns.get_supabase_admin"):
+            with make_client() as client:
+                resp = client.post("/api/campaigns/camp1/outcomes",
+                    json={"contact_id": "c1", "outcome": "ghosted"},
+                    headers=auth_headers())
         assert resp.status_code == 422
 
+
+# ─────────────────────────────────────────────────────────────
+# Draft Quality Scorer (pure unit tests — no HTTP)
+# ─────────────────────────────────────────────────────────────
 
 class TestDraftQualityScorer:
     def test_score_penalizes_generic_phrases(self):
@@ -254,6 +305,10 @@ class TestDraftQualityScorer:
         )
         assert score >= 70
 
+
+# ─────────────────────────────────────────────────────────────
+# Parse Email Output (pure unit tests — no HTTP)
+# ─────────────────────────────────────────────────────────────
 
 class TestParseEmailOutput:
     def test_parses_subject_and_body(self):
