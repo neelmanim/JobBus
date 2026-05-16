@@ -97,17 +97,20 @@ class ResumeAnalyzer:
     """Uses Gemini AI to parse resume text into a structured profile."""
 
     PARSE_PROMPT = """You are a resume parser. Analyze the following resume text and extract a structured profile.
+Note: The text may have extra spaces or unusual formatting due to PDF extraction — ignore these artifacts.
 
 Return ONLY valid JSON with this exact schema:
 {{
     "name": "Full Name",
-    "role": "Target role (e.g., Software Engineer)",
+    "role": "Current or target job title (e.g., Sr. Product Manager, Software Engineer)",
     "skills": ["skill1", "skill2", ...],
     "achievements": ["achievement1", "achievement2", ...],
     "email_context": "A concise 1-2 sentence summary of the candidate's background for use in outreach emails"
 }}
 
 Rules:
+- The name and role are usually on the first 1-2 lines of the resume header
+- role should be the person's current title or the title they are targeting (NOT the company name)
 - Extract at most 5 achievements — pick the most impressive, quantified ones
 - Skills should be specific technologies/tools, not soft skills
 - email_context should be concise and highlight what makes this candidate stand out
