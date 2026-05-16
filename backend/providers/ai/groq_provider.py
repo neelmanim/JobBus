@@ -86,13 +86,13 @@ class GroqAIProvider:
         )
 
     async def test_connection(self) -> bool:
-        """Test Groq API key."""
-        try:
-            result = await self.generate(
-                system_prompt="You are a test assistant.",
-                user_prompt="Reply with exactly: OK",
-                max_tokens=5,
-            )
-            return bool(result.text)
-        except Exception:
-            return False
+        """Test Groq API key using GET /models — no tokens consumed."""
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                resp = await client.get(
+                    f"{_BASE_URL}/models",
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                )
+                return resp.status_code == 200
+            except Exception:
+                return False

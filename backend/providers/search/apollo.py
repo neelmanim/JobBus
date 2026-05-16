@@ -99,14 +99,20 @@ class ApolloSearchProvider:
         return results[:limit]
 
     async def test_connection(self) -> bool:
-        """Test Apollo.io API key validity."""
+        """Test Apollo.io API key validity.
+
+        We hit the people search endpoint with a minimal payload.
+        200 or 422 (bad params) both confirm the key is valid.
+        401 / 403 mean the key is invalid or lacks permissions.
+        """
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
                 resp = await client.post(
-                    f"{_BASE_URL}/auth/health",
-                    json={"api_key": self._api_key},
+                    "https://api.apollo.io/api/v1/mixed_people/search",
+                    json={"api_key": self._api_key, "per_page": 1},
                     headers={"Content-Type": "application/json"},
                 )
-                return resp.status_code == 200
+                # 401 = bad key, 403 = plan restriction
+                return resp.status_code not in (401, 403)
             except Exception:
                 return False

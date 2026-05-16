@@ -80,8 +80,13 @@ class OpenAIProvider:
         )
 
     async def test_connection(self) -> bool:
-        try:
-            result = await self.generate("You are a test.", "Reply: OK", max_tokens=5)
-            return bool(result.text)
-        except Exception:
-            return False
+        """Test OpenAI API key using GET /models — no tokens consumed."""
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                resp = await client.get(
+                    f"{_BASE_URL}/models",
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                )
+                return resp.status_code == 200
+            except Exception:
+                return False
