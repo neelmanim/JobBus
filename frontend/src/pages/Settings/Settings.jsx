@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -114,7 +115,8 @@ function ProviderKeyRow({ prov, savedKeys, onSave, onTest, testingField }) {
 export default function Settings() {
   const { profile, refreshProfile, patchProfile } = useAuth();
   const toast = useToast();
-  const [tab, setTab] = useState('smtp');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => searchParams.get('tab') || 'smtp');
 
   // ── SMTP ─────────────────────────────────────────────────
   const [smtpStatus, setSmtpStatus] = useState(null);
@@ -341,7 +343,14 @@ export default function Settings() {
                 <div className="input-group">
                   <label className="input-label">App Password</label>
                   <div className="password-input">
-                      value={smtpForm.smtp_pass} onChange={e => setSmtpForm(p => ({ ...p, smtp_pass: e.target.value }))} required />
+                    <input
+                      className="input"
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="Gmail App Password (16 chars)"
+                      value={smtpForm.smtp_pass}
+                      onChange={e => setSmtpForm(p => ({ ...p, smtp_pass: e.target.value }))}
+                      required
+                    />
                     <button type="button" className="password-toggle" onClick={() => setShowPassword(s => !s)}>
                       {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>

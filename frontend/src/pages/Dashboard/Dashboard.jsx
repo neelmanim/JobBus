@@ -74,10 +74,10 @@ export default function Dashboard() {
   }
 
   const checklistItems = [
-    { done: smtpReady,    label: 'Connect your Gmail',         link: '/settings', hint: 'Settings → Email' },
-    { done: providerReady, label: 'Add an AI provider key',    link: '/settings', hint: 'Settings → AI & Search' },
-    { done: resumeReady,  label: 'Upload your resume',         link: '/resume',   hint: 'Resume page' },
-    { done: stats.campaigns > 0, label: 'Create your first campaign', link: '/campaigns', hint: 'Campaigns page' },
+    { done: smtpReady,    label: 'Connect your Gmail',         link: '/settings?tab=smtp',      hint: 'Settings → Email' },
+    { done: providerReady, label: 'Add an AI provider key',    link: '/settings?tab=providers', hint: 'Settings → AI & Search' },
+    { done: resumeReady,  label: 'Upload your resume',         link: '/resume',                 hint: 'Resume page' },
+    { done: stats.campaigns > 0, label: 'Create your first campaign', link: '/campaigns',      hint: 'Campaigns page' },
   ];
   const checklistAllDone = checklistItems.every(c => c.done);
   const showChecklist = !checklistDismissed && !checklistAllDone;

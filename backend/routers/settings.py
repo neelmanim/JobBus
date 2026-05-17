@@ -33,12 +33,16 @@ class ProviderKeyRequest(BaseModel):
 
 
 class AIProviderPreference(BaseModel):
-    provider: str = Field(..., description="groq | gemini | openai | ollama")
+    ai_provider: str = Field(..., alias="ai_provider", description="groq | gemini | openai | ollama")
     model: str = Field("auto", description="auto | fast | quality | or raw model ID")
+
+    model_config = {"populate_by_name": True}
 
 
 class SearchProviderPreference(BaseModel):
-    provider: str = Field(..., description="hunter | apollo | rocketreach")
+    search_provider: str = Field(..., alias="search_provider", description="hunter | apollo | rocketreach")
+
+    model_config = {"populate_by_name": True}
 
 
 class EmailStyleRequest(BaseModel):
@@ -128,11 +132,18 @@ async def get_provider_status(user: dict = Depends(get_current_user)):
     ).eq("user_id", user["user_id"]).single().execute()
     profile = profile_result.data or {}
 
+    # Check if a system-level Groq key is configured (enables Beginner mode)
+    system_groq_result = supabase.table("system_config").select("value").eq("key", "system_groq_key").execute()
+    system_groq_available = bool(
+        system_groq_result.data and system_groq_result.data[0].get("value")
+    )
+
     return {
         **key_status,
         "ai_provider": profile.get("ai_provider", "groq"),
         "ai_model": profile.get("ai_model", "auto"),
         "search_provider": profile.get("search_provider", "hunter"),
+        "system_groq_available": system_groq_available,
     }
 
 
@@ -225,16 +236,16 @@ async def set_ai_provider(
 ):
     """Set user's preferred AI provider and model tier."""
     valid_providers = {"groq", "gemini", "openai", "ollama"}
-    if request.provider not in valid_providers:
+    if request.ai_provider not in valid_providers:
         raise HTTPException(status_code=422, detail=f"Provider must be one of: {valid_providers}")
 
     supabase = get_supabase_admin()
     supabase.table("user_profiles").update({
-        "ai_provider": request.provider,
+        "ai_provider": request.ai_provider,
         "ai_model": request.model,
     }).eq("user_id", user["user_id"]).execute()
 
-    return {"ai_provider": request.provider, "ai_model": request.model}
+    return {"ai_provider": request.ai_provider, "ai_model": request.model}
 
 
 @router.put("/search-provider")
@@ -244,15 +255,15 @@ async def set_search_provider(
 ):
     """Set user's preferred contact search provider."""
     valid_providers = {"hunter", "apollo", "rocketreach"}
-    if request.provider not in valid_providers:
+    if request.search_provider not in valid_providers:
         raise HTTPException(status_code=422, detail=f"Provider must be one of: {valid_providers}")
 
     supabase = get_supabase_admin()
     supabase.table("user_profiles").update({
-        "search_provider": request.provider,
+        "search_provider": request.search_provider,
     }).eq("user_id", user["user_id"]).execute()
 
-    return {"search_provider": request.provider}
+    return {"search_provider": request.search_provider}
 
 
 # ─────────────────────────────────────────────────────────────
