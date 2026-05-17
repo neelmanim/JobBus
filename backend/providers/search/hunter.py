@@ -40,7 +40,7 @@ class HunterSearchProvider:
                     params={
                         "domain": domain,
                         "api_key": self._api_key,
-                        "limit": min(limit * 3, 100),  # fetch more to filter by title
+                        "limit": min(limit * 2, 10),  # free plan hard cap = 10
                         "type": "personal",
                     },
                 )

@@ -1,9 +1,12 @@
 """
 JobBus — Apollo.io Search Provider.
 
-POST /v1/mixed_people/search → search by title, company, domain.
-Requires Organization plan ($119/user/month min).
-Used in Advanced mode when user provides their own key.
+POST /api/v1/mixed_people/api_search → search by title, company, domain.
+Key is passed via x-api-key header (NOT in body — old style is deprecated).
+
+NOTE: Free plan returns names but masks emails (shows ??? placeholders).
+      Contacts without a real email are skipped — Hunter is the better free
+      option; Apollo shines when you have a paid plan with email reveal.
 """
 
 from __future__ import annotations
@@ -15,7 +18,9 @@ from providers.search.base import ContactResult, SearchProvider, classify_person
 
 logger = logging.getLogger(__name__)
 
-_BASE_URL = "https://api.apollo.io/v1"
+# Correct endpoint as of 2025 — mixed_people/search and people/search are DEPRECATED
+_SEARCH_URL = "https://api.apollo.io/api/v1/mixed_people/api_search"
+_TEST_URL    = "https://api.apollo.io/api/v1/mixed_people/api_search"
 
 # Default seniority filter — skip junior engineers
 _DEFAULT_SENIORITY = ["director", "vp", "c_suite", "partner", "manager", "senior", "founder"]
@@ -38,10 +43,8 @@ class ApolloSearchProvider:
     ) -> list[ContactResult]:
         """Search for contacts using Apollo's people search API."""
         payload: dict = {
-            "api_key": self._api_key,
-            "q_organization_domains": [domain],
+            "q_organization_domains_list": [domain],
             "person_seniorities": _DEFAULT_SENIORITY,
-            "contact_email_status": ["verified", "guessed", "unavailable", "bounced", "pending_manual_fulfillment"],
             "per_page": min(limit * 3, 25),
             "page": 1,
         }
@@ -52,16 +55,20 @@ class ApolloSearchProvider:
         async with httpx.AsyncClient(timeout=20.0) as client:
             try:
                 resp = await client.post(
-                    f"{_BASE_URL}/mixed_people/search",
+                    _SEARCH_URL,
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    # Key goes in header, NOT body (old body-key style is deprecated)
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-api-key": self._api_key,
+                    },
                 )
                 resp.raise_for_status()
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 401:
-                    raise ValueError("Apollo.io: Invalid API key — requires Organization plan")
+                    raise ValueError("Apollo.io: Invalid API key")
                 if e.response.status_code == 422:
-                    raise ValueError("Apollo.io: Invalid search parameters")
+                    raise ValueError(f"Apollo.io: Invalid search parameters — {e.response.text[:200]}")
                 raise ValueError(f"Apollo.io API error: {e.response.status_code}")
             except httpx.TimeoutException:
                 raise ValueError("Apollo.io: Request timed out")
@@ -70,15 +77,13 @@ class ApolloSearchProvider:
         results: list[ContactResult] = []
 
         for person in people:
-            email = person.get("email")
-            if not email or email in ("", "N/A"):
-                # Try work email
-                email = person.get("work_email", "")
-            if not email:
+            email = person.get("email") or person.get("work_email", "")
+            # Apollo free tier returns masked emails like "j***@google.com" — skip them
+            if not email or "***" in email or email in ("N/A", ""):
                 continue
 
             first = person.get("first_name") or ""
-            last = person.get("last_name") or ""
+            last  = person.get("last_name") or ""
             title = person.get("title") or ""
             linkedin = person.get("linkedin_url") or None
 
@@ -99,20 +104,19 @@ class ApolloSearchProvider:
         return results[:limit]
 
     async def test_connection(self) -> bool:
-        """Test Apollo.io API key validity.
-
-        We hit the people search endpoint with a minimal payload.
-        200 or 422 (bad params) both confirm the key is valid.
-        401 / 403 mean the key is invalid or lacks permissions.
-        """
+        """Test Apollo.io API key validity."""
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
                 resp = await client.post(
-                    "https://api.apollo.io/api/v1/mixed_people/search",
-                    json={"api_key": self._api_key, "per_page": 1},
-                    headers={"Content-Type": "application/json"},
+                    _TEST_URL,
+                    json={"per_page": 1},
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-api-key": self._api_key,
+                    },
                 )
-                # 401 = bad key, 403 = plan restriction
+                # 200 = key works; 422 = key valid but bad params (still OK)
+                # 401 / 403 = invalid or expired key
                 return resp.status_code not in (401, 403)
             except Exception:
                 return False
