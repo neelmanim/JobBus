@@ -308,8 +308,9 @@ class OpportunityScorer:
             seen.add(key)
 
             score = self.score(opp, resume_profile, user_preferences)
-            if score.tier != OpportunityTier.LOW:
-                scored.append({**opp, "_score": score})
+            # Include ALL tiers — LOW just means less signals available, not irrelevant
+            # A resume upload will re-score and elevate the best matches
+            scored.append({**opp, "_score": score})
 
         # Sort by total score descending
         scored.sort(key=lambda x: x["_score"].total, reverse=True)

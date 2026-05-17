@@ -19,6 +19,21 @@ router = APIRouter(prefix="/api/opportunities", tags=["opportunities"])
 scorer = OpportunityScorer()
 
 
+def _extract_domain(url: str) -> str:
+    """Extract bare domain from a URL, e.g. 'https://stripe.com/jobs/123' → 'stripe.com'."""
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        host = parsed.netloc or parsed.path
+        # strip www.
+        return host.replace("www.", "").split("/")[0]
+    except Exception:
+        return ""
+
+
+
 @router.get("/search")
 async def search_opportunities(
     query: str,
@@ -58,11 +73,12 @@ async def search_opportunities(
     saved = []
     for opp in scored:
         score_result = opp.pop("_score")
+        job_url = opp.get("job_url") or ""
         data = {
             "user_id": user["user_id"],
             "company_name": opp.get("company_name", ""),
             "role_title": opp.get("role_title", ""),
-            "job_url": opp.get("job_url"),
+            "job_url": job_url or None,  # store NULL not empty string
             "score": score_result.total,
             "tier": score_result.tier.value,
             "signals": opp.get("signals", {}),
@@ -74,12 +90,36 @@ async def search_opportunities(
             "is_remote": opp.get("is_remote", False),
             "source": opp.get("source", source),
         }
-        result = supabase.table("opportunities").upsert(
-            data,
-            on_conflict="user_id,job_url",   # avoid duplicates for same posting
-        ).execute()
-        if result.data:
-            saved.append(result.data[0])
+        try:
+            if job_url:
+                result = supabase.table("opportunities").upsert(
+                    data,
+                    on_conflict="user_id,job_url",
+                ).execute()
+            else:
+                # No URL — insert only if company+role combo not already saved
+                existing = supabase.table("opportunities").select("id") \
+                    .eq("user_id", user["user_id"]) \
+                    .eq("company_name", data["company_name"]) \
+                    .eq("role_title", data["role_title"]) \
+                    .execute()
+                if existing.data:
+                    result = supabase.table("opportunities").update(data) \
+                        .eq("id", existing.data[0]["id"]).execute()
+                else:
+                    result = supabase.table("opportunities").insert(data).execute()
+            if result.data:
+                row = result.data[0]
+                # Add UI-friendly aliases so frontend opp.company / opp.title resolve
+                row["company"] = row.get("company_name", "")
+                row["title"] = row.get("role_title", "")
+                row["url"] = row.get("job_url", "")
+                row["domain"] = _extract_domain(row.get("job_url", ""))
+                saved.append(row)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to save opportunity: {e}")
+            continue
 
     return {"opportunities": saved, "count": len(saved), "source": source}
 
@@ -102,7 +142,14 @@ async def list_opportunities(
         q = q.eq("tier", tier)
 
     result = q.execute()
-    return {"opportunities": result.data or []}
+    rows = []
+    for row in (result.data or []):
+        row["company"] = row.get("company_name", "")
+        row["title"]   = row.get("role_title", "")
+        row["url"]     = row.get("job_url", "")
+        row["domain"]  = _extract_domain(row.get("job_url", ""))
+        rows.append(row)
+    return {"opportunities": rows}
 
 
 @router.get("/{opportunity_id}")
