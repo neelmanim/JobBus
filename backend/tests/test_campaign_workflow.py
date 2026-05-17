@@ -51,19 +51,21 @@ class TestGenerateDrafts:
                            "signature_linkedin": None, "custom_instructions": None}
             opp_row = {"id": "opp1", "role": "Backend Eng", "company": "Stripe"}
 
-            # Each call to .execute() returns the next item in order:
-            # 1. Campaign lookup (.single().execute())
-            # 2. Contacts query (.execute())
-            # 3. Approved drafts check (.execute())
-            # 4. User profile (.single().execute())
-            # 5. Opportunity (.single().execute())
-            # 6. Draft insert (.insert().execute())
+            # Updated call sequence after the campaign_contacts fix:
+            # 1. Campaign lookup            (.single().execute())
+            # 2. campaign_contacts join     (.eq(campaign_id).execute())  ← NEW
+            # 3. contacts.in_() fetch       (.in_().execute())            ← NEW
+            # 4. Approved drafts check      (.eq(status).execute())
+            # 5. User profile               (.single().execute())
+            # 6. Opportunity                (.single().execute())
+            # 7. Draft insert               (.insert().execute())
             execute_results = [
-                MagicMock(data=campaign_row),   # 1 campaign single
-                MagicMock(data=[contact_row]),  # 2 contacts list
-                MagicMock(data=[]),             # 3 approved drafts (none)
-                MagicMock(data=profile_row),    # 4 user profile single
-                MagicMock(data=opp_row),        # 5 opportunity single
+                MagicMock(data=campaign_row),               # 1 campaign single
+                MagicMock(data=[{"contact_id": "c1"}]),    # 2 campaign_contacts join
+                MagicMock(data=[contact_row]),              # 3 contacts.in_() fetch
+                MagicMock(data=[]),                         # 4 approved drafts (none)
+                MagicMock(data=profile_row),                # 5 user profile single
+                MagicMock(data=opp_row),                    # 6 opportunity single
             ]
 
             call_count = [0]
@@ -74,19 +76,19 @@ class TestGenerateDrafts:
                     return execute_results[idx]
                 return MagicMock(data=[])
 
-            # Wire every .execute() to our side_effect
-            mock_db.return_value.table.return_value.select.return_value \
-                .eq.return_value.eq.return_value.single.return_value \
+            # Wire every .execute() variant to our counter
+            table = mock_db.return_value.table.return_value
+            table.select.return_value.eq.return_value.eq.return_value \
+                .single.return_value.execute.side_effect = execute_side_effect
+            table.select.return_value.eq.return_value.eq.return_value \
                 .execute.side_effect = execute_side_effect
-            mock_db.return_value.table.return_value.select.return_value \
-                .eq.return_value.eq.return_value.execute.side_effect = execute_side_effect
-            mock_db.return_value.table.return_value.select.return_value \
-                .eq.return_value.single.return_value \
+            table.select.return_value.eq.return_value.single.return_value \
                 .execute.side_effect = execute_side_effect
-            mock_db.return_value.table.return_value.select.return_value \
-                .eq.return_value.execute.side_effect = execute_side_effect
-            mock_db.return_value.table.return_value.insert \
-                .return_value.execute.return_value.data = [{"id": "d1"}]
+            table.select.return_value.eq.return_value \
+                .execute.side_effect = execute_side_effect
+            table.select.return_value.in_.return_value \
+                .execute.side_effect = execute_side_effect
+            table.insert.return_value.execute.return_value.data = [{"id": "d1"}]
 
             from providers.ai.base import GenerationResult
             mock_ai = AsyncMock()
@@ -104,7 +106,8 @@ class TestGenerateDrafts:
                 json={"regenerate": False, "tone": "professional"},
                 headers=auth_headers())
             assert resp.status_code == 200
-            assert resp.json()["generated"] >= 0
+            data = resp.json()
+            assert data["generated"] >= 1, f"Expected >=1 draft, got: {data}"
 
     def test_requires_contacts(self):
         with patch("routers.campaigns.get_supabase_admin") as mock_db, \
