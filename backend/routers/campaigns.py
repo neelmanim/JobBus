@@ -145,15 +145,36 @@ async def generate_drafts(
 
     campaign = campaign_result.data
 
-    # Get contacts for this campaign
-    contacts_query = supabase.table("contacts").select("*").eq("user_id", user_id)
+    # ── Resolve contacts for this campaign ─────────────────────────
+    # Strategy mirrors get_campaign_contacts:
+    # 1) explicit contact_ids from request  (most specific)
+    # 2) campaign_contacts join table       (set by addCampaignContacts)
+    # 3) contacts.opportunity_id fallback   (legacy path)
     if request.contact_ids:
-        contacts_query = contacts_query.in_("id", request.contact_ids)
+        contacts_result = supabase.table("contacts").select("*").eq(
+            "user_id", user_id
+        ).in_("id", request.contact_ids).execute()
+        contacts = contacts_result.data or []
     else:
-        # Default: all contacts linked to this campaign via opportunity
-        if campaign.get("opportunity_id"):
-            contacts_query = contacts_query.eq("opportunity_id", campaign["opportunity_id"])
-    contacts = contacts_query.execute().data
+        # Check join table first
+        cc_result = supabase.table("campaign_contacts").select(
+            "contact_id"
+        ).eq("campaign_id", campaign_id).execute()
+        contact_ids = [r["contact_id"] for r in (cc_result.data or [])]
+
+        if contact_ids:
+            contacts_result = supabase.table("contacts").select("*").in_(
+                "id", contact_ids
+            ).execute()
+            contacts = contacts_result.data or []
+        elif campaign.get("opportunity_id"):
+            # Legacy fallback: contacts tagged with the opportunity
+            contacts_result = supabase.table("contacts").select("*").eq(
+                "user_id", user_id
+            ).eq("opportunity_id", campaign["opportunity_id"]).execute()
+            contacts = contacts_result.data or []
+        else:
+            contacts = []
 
     if not contacts:
         raise HTTPException(
