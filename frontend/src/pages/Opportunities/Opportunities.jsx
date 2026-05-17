@@ -219,6 +219,9 @@ export default function Opportunities() {
   const [source, setSource]           = useState('');
   const [selectedOpp, setSelectedOpp] = useState(null);
   const [outreachOpp, setOutreachOpp] = useState(null);
+  const [showManual, setShowManual]   = useState(false);
+  const [manualForm, setManualForm]   = useState({ role_title: '', company_name: '', job_url: '', location: '', is_remote: false });
+  const [manualLoading, setManualLoading] = useState(false);
 
   // ── Auto-load: on mount, fetch previously saved opportunities first.
   // If none exist (or all have score=0 from before the scorer fix), trigger auto-search.
@@ -281,6 +284,28 @@ export default function Opportunities() {
     await runSearch(query, location);
   }
 
+  async function handleManualAdd(e) {
+    e.preventDefault();
+    if (!manualForm.role_title.trim() || !manualForm.company_name.trim()) return;
+    setManualLoading(true);
+    try {
+      const res = await api.post('/api/opportunities/manual', manualForm);
+      const opp = res?.opportunity;
+      if (opp) {
+        setOpportunities(prev => [opp, ...prev]);
+        setSource('manual');
+        setSearched(true);
+        setShowManual(false);
+        setManualForm({ role_title: '', company_name: '', job_url: '', location: '', is_remote: false });
+        toast.success(`Added: ${opp.title} @ ${opp.company}`);
+      }
+    } catch (err) {
+      toast.error(err.message || 'Failed to add job');
+    } finally {
+      setManualLoading(false);
+    }
+  }
+
   return (
     <div className="opportunities-page">
       <div className="page-header">
@@ -323,12 +348,75 @@ export default function Opportunities() {
             <RefreshCw size={16} />
           </button>
         )}
+        <button
+          type="button"
+          className="btn btn-ghost"
+          title="Add job manually"
+          onClick={() => setShowManual(true)}
+          style={{ marginLeft: 'auto' }}
+        >
+          + Add Manually
+        </button>
       </form>
+
+      {/* Manual Entry Modal */}
+      {showManual && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setShowManual(false)}>
+          <div className="modal" style={{ maxWidth: 480 }}>
+            <div className="modal-header">
+              <div>
+                <h2 className="modal-title">Add Job Manually</h2>
+                <p className="modal-subtitle text-secondary">Paste a role from any job board</p>
+              </div>
+              <button className="btn btn-ghost btn-sm icon-only" onClick={() => setShowManual(false)}><X size={18} /></button>
+            </div>
+            <form className="modal-body" onSubmit={handleManualAdd}>
+              <div className="input-group">
+                <label className="input-label">Job Title <span className="text-danger">*</span></label>
+                <input className="input" placeholder="e.g. Senior Product Manager" value={manualForm.role_title}
+                  onChange={e => setManualForm(f => ({ ...f, role_title: e.target.value }))} required />
+              </div>
+              <div className="input-group">
+                <label className="input-label">Company <span className="text-danger">*</span></label>
+                <input className="input" placeholder="e.g. Stripe" value={manualForm.company_name}
+                  onChange={e => setManualForm(f => ({ ...f, company_name: e.target.value }))} required />
+              </div>
+              <div className="input-group">
+                <label className="input-label">Job URL <span className="text-secondary">(optional)</span></label>
+                <input className="input" placeholder="https://..." value={manualForm.job_url}
+                  onChange={e => setManualForm(f => ({ ...f, job_url: e.target.value }))} />
+              </div>
+              <div className="input-group">
+                <label className="input-label">Location</label>
+                <input className="input" placeholder="e.g. New York, NY or Remote" value={manualForm.location}
+                  onChange={e => setManualForm(f => ({ ...f, location: e.target.value }))} />
+              </div>
+              <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" id="is_remote" checked={manualForm.is_remote}
+                  onChange={e => setManualForm(f => ({ ...f, is_remote: e.target.checked }))} />
+                <label htmlFor="is_remote" className="input-label" style={{ margin: 0 }}>Remote position</label>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-ghost" onClick={() => setShowManual(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={manualLoading || !manualForm.role_title.trim() || !manualForm.company_name.trim()}>
+                  {manualLoading ? <span className="spinner" /> : '+ Add Job'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Source badge */}
       {source && !loading && opportunities.length > 0 && (
         <p className="text-xs text-secondary" style={{ marginBottom: 8 }}>
-          Results via <strong>{source === 'remotive' ? 'Remotive (remote jobs)' : 'JSearch'}</strong>
+          Results via <strong>{
+            source === 'linkedin' ? 'LinkedIn Jobs' :
+            source === 'jsearch'  ? 'JSearch (Google for Jobs)' :
+            source === 'cache'    ? 'Saved Results' :
+            source === 'manual'   ? 'Manual Entry' :
+            source
+          }</strong>
         </p>
       )}
 

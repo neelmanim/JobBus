@@ -6,12 +6,22 @@ Entry point for the backend API server.
 
 from __future__ import annotations
 
-
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from routers import auth, admin, resume, campaigns, opportunities, settings as settings_router, contacts
+from services.followup_scheduler import start_followup_scheduler, process_due_followups
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """App startup/shutdown lifecycle."""
+    # Start follow-up auto-sender (checks every hour for due follow-ups)
+    start_followup_scheduler(interval_seconds=3600)
+    yield
+    # Shutdown: daemon thread dies with process — nothing extra needed
 
 
 def create_app() -> FastAPI:
@@ -22,6 +32,7 @@ def create_app() -> FastAPI:
         title="JobBus API",
         description="Intelligent Career Outreach System — API",
         version="1.0.0",
+        lifespan=lifespan,
         docs_url="/docs" if cfg.environment != "production" else None,
         redoc_url="/redoc" if cfg.environment != "production" else None,
     )
@@ -64,6 +75,14 @@ def create_app() -> FastAPI:
             "version": "1.0.0",
             "environment": cfg.environment,
         }
+
+    # Manual trigger: process due follow-ups immediately
+    # Useful for testing and for Railway cron if added later
+    @app.post("/api/followups/process")
+    async def trigger_followup_processing():
+        """Manually trigger follow-up processing (admin/debug use)."""
+        result = await process_due_followups()
+        return result
 
     return app
 

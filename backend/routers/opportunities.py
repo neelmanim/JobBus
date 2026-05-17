@@ -230,3 +230,105 @@ async def update_opportunity_status(
     if not result.data:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     return result.data[0]
+
+
+# ── Manual job entry ──────────────────────────────────────────────────────────
+
+from pydantic import BaseModel
+
+
+class ManualJobEntry(BaseModel):
+    role_title: str
+    company_name: str
+    job_url: str = ""
+    location: str = ""
+    is_remote: bool = False
+    notes: str = ""
+
+
+@router.post("/manual")
+async def add_manual_opportunity(
+    body: ManualJobEntry,
+    user: dict = Depends(get_current_user),
+):
+    """Add a job opportunity manually (paste from any job board).
+
+    Useful when:
+    - LinkedIn guest API is rate-limited
+    - User found a role on Indeed / company careers page
+    - User wants to track a specific job regardless of search
+
+    The job is scored against the user's resume profile (if available).
+    """
+    from services.resume_analyzer import get_resume_profile
+
+    profile = get_resume_profile(user["user_id"])
+    resume_dict = {
+        "name":         profile.name   if profile else "",
+        "role":         profile.role   if profile else body.role_title,
+        "skills":       profile.skills if profile else [],
+        "achievements": profile.achievements if profile else [],
+    }
+
+    # Build a minimal job dict and score it
+    job = {
+        "role_title":          body.role_title,
+        "company_name":        body.company_name,
+        "job_url":             body.job_url,
+        "location":            body.location,
+        "is_remote":           body.is_remote,
+        "description_snippet": body.notes,
+        "source":              "manual",
+        "signals": {"hiring": True, "role_match_keywords": []},
+    }
+
+    scored_list = scorer.get_top_picks([job], resume_dict, max_count=1)
+    if not scored_list:
+        # Score failed — insert with score 0
+        score_total = 0
+        tier_value  = "low"
+        angle_value = "direct_value"
+    else:
+        scored_job   = scored_list[0]
+        score_result = scored_job.pop("_score")
+        score_total  = score_result.total
+        tier_value   = score_result.tier.value
+        angle_value  = OpportunityScorer.recommend_angle(score_result, {}).value
+
+    job_url = body.job_url.strip() or None
+    data = {
+        "user_id":           user["user_id"],
+        "search_query":      body.role_title.lower().strip(),
+        "company_name":      body.company_name,
+        "role_title":        body.role_title,
+        "job_url":           job_url,
+        "score":             score_total,
+        "tier":              tier_value,
+        "signals":           {"hiring": True, "manual_entry": True},
+        "recommended_angle": angle_value,
+        "status":            "discovered",
+        "location":          body.location,
+        "is_remote":         body.is_remote,
+        "source":            "manual",
+    }
+
+    supabase = get_supabase_admin()
+    try:
+        result = supabase.table("opportunities").insert(data).execute()
+        if result.data:
+            row = result.data[0]
+            row["company"] = row.get("company_name", "")
+            row["title"]   = row.get("role_title", "")
+            row["url"]     = row.get("job_url", "")
+            row["domain"]  = _extract_domain(row.get("job_url", ""))
+            return {"opportunity": row, "source": "manual"}
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Manual entry DB write failed: {e}")
+
+    # Return in-memory even if DB write failed
+    data["company"] = data["company_name"]
+    data["title"]   = data["role_title"]
+    data["url"]     = body.job_url
+    data["domain"]  = _extract_domain(body.job_url)
+    return {"opportunity": data, "source": "manual"}
