@@ -80,7 +80,8 @@ export default function Dashboard() {
     { done: stats.campaigns > 0, label: 'Create your first campaign', link: '/campaigns',      hint: 'Campaigns page' },
   ];
   const checklistAllDone = checklistItems.every(c => c.done);
-  const showChecklist = !checklistDismissed && !checklistAllDone;
+  // Only show checklist once loading is complete — prevents 0-of-4 flicker
+  const showChecklist = !loading && !checklistDismissed && !checklistAllDone;
 
   const greeting = () => {
     const h = new Date().getHours();

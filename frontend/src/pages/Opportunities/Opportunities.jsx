@@ -221,7 +221,7 @@ export default function Opportunities() {
   const [outreachOpp, setOutreachOpp] = useState(null);
 
   // ── Auto-load: on mount, fetch previously saved opportunities first.
-  // If none exist AND we have a resume role, trigger an automatic search.
+  // If none exist (or all have score=0 from before the scorer fix), trigger auto-search.
   useEffect(() => {
     async function init() {
       try {
@@ -229,14 +229,21 @@ export default function Opportunities() {
         const saved = await api.listOpportunities();
         const list = saved?.opportunities || [];
 
-        if (list.length > 0) {
+        // Only use saved results if they have actual scores (not all 0 from old broken scorer)
+        const hasGoodResults = list.length > 0 && list.some(o => (o.score || 0) > 0);
+        if (hasGoodResults) {
           setOpportunities(list);
           setSearched(true);
-          return; // We have results, no need to auto-search
+          return;
         }
 
-        // 2. No saved opps — auto-search using resume role or a generic default
-        const autoQuery = profile?.role || 'software engineer';
+        // 2. Auto-search — try resume profile role, then default
+        let autoQuery = 'software engineer';
+        try {
+          const resumeProfile = await api.getResumeProfile();
+          if (resumeProfile?.role) autoQuery = resumeProfile.role;
+        } catch { /* resume not uploaded yet, use default */ }
+
         setQuery(autoQuery);
         await runSearch(autoQuery, '');
       } catch (err) {
