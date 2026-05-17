@@ -1,10 +1,18 @@
 """
 JobBus Backend — Signal Collectors.
 
-Gathers external signals for opportunity scoring:
-  - JSearch: Job postings from RapidAPI (premium, requires JSEARCH_API_KEY)
-  - Remotive: Free remote jobs — NO key needed (automatic fallback)
-  - FundingCollector / CompanyInfoCollector: stubs for future enrichment
+Gathers external job signals for opportunity scoring.
+
+Source waterfall (best → always-available):
+  1. JSearch (RapidAPI) — premium, requires JSEARCH_API_KEY
+     Aggregates Google for Jobs → LinkedIn, Indeed, ZipRecruiter data.
+
+  2. LinkedIn Guest API — FREE, no key, always available.
+     LinkedIn's public job search endpoint returns real keyword-matched
+     results. No auth required (same data as linkedin.com/jobs logged out).
+
+  NOTE: Remotive was removed — it ignores the `search` parameter entirely
+  and always returns the same ~18 static jobs regardless of the query.
 """
 
 from __future__ import annotations
@@ -92,111 +100,144 @@ class JSearchCollector:
         }
 
 
-class RemotiveCollector:
-    """Free remote jobs from Remotive.com — NO API key required.
+class LinkedInCollector:
+    """Scrapes LinkedIn public guest job search — FREE, no key needed.
 
-    This is the automatic fallback when JSearch key is absent.
-    Public API: https://remotive.com/api/remote-jobs
+    Uses LinkedIn's unauthenticated job listing endpoint. Returns real,
+    keyword-matched jobs sorted by relevance — the same results as
+    linkedin.com/jobs when browsing without an account.
+
+    Rate limit: graceful (~100 req/hour per IP). Falls back to [] on any error.
     """
 
-    BASE_URL = "https://remotive.com/api/remote-jobs"
+    BASE_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 
-    async def search_jobs(self, query: str, location: str = "") -> list[dict]:
-        """Search Remotive for remote jobs. Always works, no key needed."""
+    HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    async def search_jobs(
+        self,
+        query: str,
+        location: str = "",
+        count: int = 25,
+    ) -> list[dict]:
+        """Search LinkedIn guest API. Parses HTML, returns normalized job dicts."""
+        params = {
+            "keywords": query,
+            "start": "0",
+            "count": str(count),
+            "sortBy": "R",  # Relevance
+        }
+        if location:
+            params["location"] = location
+
         try:
-            params = {"search": query, "limit": 40}  # fetch more so filtering still leaves enough
-            async with httpx.AsyncClient(timeout=20) as client:
-                response = await client.get(self.BASE_URL, params=params)
+            async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+                response = await client.get(
+                    self.BASE_URL,
+                    params=params,
+                    headers=self.HEADERS,
+                )
                 response.raise_for_status()
-                data = response.json()
+                html = response.text
 
-            jobs = data.get("jobs", [])
-            return [self._normalize(job) for job in jobs]
+            return self._parse_html(html)
 
-        except httpx.HTTPError:
+        except Exception:
             return []
 
     @staticmethod
-    def _normalize(job: dict) -> dict:
-        return {
-            "job_url": job.get("url", ""),
-            "role_title": job.get("title", ""),
-            "company_name": job.get("company_name", ""),
-            "company_logo": job.get("company_logo"),
-            "location": job.get("candidate_required_location", "Remote"),
-            "is_remote": True,
-            "posted_at": job.get("publication_date"),
-            "description_snippet": _strip_html(job.get("description", ""))[:300],
-            "source": "remotive",
-            "signals": {
-                "hiring": True,
-                "role_match_keywords": _extract_keywords(
-                    job.get("title", "") + " " + str(job.get("tags", ""))
-                ),
-            },
-        }
+    def _parse_html(html: str) -> list[dict]:
+        """Parse LinkedIn HTML response into normalized job dicts."""
+        jobs = []
+
+        titles    = re.findall(r'class="base-search-card__title"[^>]*>\s*([^<]+)\s*<', html)
+        companies = re.findall(r'class="base-search-card__subtitle"[^>]*>\s*<[^>]+>\s*([^<]+)\s*<', html)
+        locations = re.findall(r'class="job-search-card__location"[^>]*>\s*([^<]+)\s*<', html)
+        links     = re.findall(r'href="(https://www\.linkedin\.com/jobs/view/[^"?]+)', html)
+
+        for i, title in enumerate(titles):
+            title    = title.strip()
+            company  = companies[i].strip() if i < len(companies) else ""
+            location = locations[i].strip() if i < len(locations) else ""
+            url      = links[i] if i < len(links) else ""
+
+            if not title or not company:
+                continue
+
+            jobs.append({
+                "job_url":             url,
+                "role_title":          title,
+                "company_name":        company,
+                "company_logo":        None,
+                "location":            location,
+                "is_remote":           "remote" in location.lower(),
+                "posted_at":           None,
+                "description_snippet": f"{title} position at {company}. Location: {location}",
+                "source":              "linkedin",
+                "signals": {
+                    "hiring": True,
+                    "role_match_keywords": _extract_keywords(title),
+                },
+            })
+
+        return jobs
 
 
 class FundingCollector:
     """Collects company funding data (stub)."""
 
     async def check_funding(self, company_name: str) -> dict:
-        return {
-            "recently_funded": False,
-            "funding_round": None,
-            "amount": None,
-            "date": None,
-        }
+        return {"recently_funded": False, "funding_round": None, "amount": None, "date": None}
 
 
 class CompanyInfoCollector:
     """Collects company metadata (stub)."""
 
     async def get_info(self, company_name: str) -> dict:
-        return {
-            "company_size": None,
-            "industry": None,
-            "website": None,
-            "remote_friendly": None,
-        }
+        return {"company_size": None, "industry": None, "website": None, "remote_friendly": None}
 
 
 async def search_jobs_auto(query: str, location: str = "") -> tuple[list[dict], str]:
-    """Waterfall job search: JSearch (premium key) → Remotive (free, always available).
+    """Waterfall job search: JSearch (premium key) → LinkedIn (free, always available).
 
-    Results are filtered by title relevance — Remotive's search is fuzzy and often
-    returns unrelated roles. We keep a job only if at least one meaningful word
-    from the query appears in the role title.
+    Both sources do real keyword matching — results are relevant to the query.
+    A title-relevance filter is applied as a secondary guard.
 
     Returns:
         (list of normalized job dicts, source_name used)
     """
+    # Edge case: empty or whitespace-only query
+    query = (query or "").strip() or "software engineer"
+
     jsearch = JSearchCollector()
     if jsearch.has_key:
         jobs = await jsearch.search_jobs(query=query, location=location)
         if jobs:
-            return _filter_by_title_relevance(jobs, query), "jsearch"
+            return jobs, "jsearch"
 
-    # Free fallback — always available, no key needed
-    remotive = RemotiveCollector()
-    jobs = await remotive.search_jobs(query=query, location=location)
+    # Free fallback — LinkedIn guest API, always available, real keyword search
+    linkedin = LinkedInCollector()
+    jobs = await linkedin.search_jobs(query=query, location=location)
     filtered = _filter_by_title_relevance(jobs, query)
-    # If strict filter is too aggressive (< 3 results), relax and return all
-    return (filtered if len(filtered) >= 3 else jobs), "remotive"
+    # Safety: if strict filter returns < 3, use all LinkedIn results
+    return (filtered if len(filtered) >= 3 else jobs), "linkedin"
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _strip_html(text: str) -> str:
-    """Lightweight HTML tag stripper for Remotive descriptions."""
-    return re.sub(r"<[^>]+>", " ", text).strip()
-
-
-# Stop-words to ignore when matching query to title
+# Stop-words to skip when building query-word list for relevance matching
 _STOP_WORDS = {
     "a", "an", "the", "and", "or", "for", "in", "at", "to", "of",
     "with", "is", "are", "be", "as", "on", "it", "its",
-    "senior", "junior", "mid", "lead", "staff", "principal",  # seniority (not role-specific)
+    "senior", "junior", "mid", "lead", "staff", "principal",
 }
 
 
@@ -204,36 +245,31 @@ def _filter_by_title_relevance(jobs: list[dict], query: str) -> list[dict]:
     """Keep only jobs where the role title is relevant to the search query.
 
     Strategy:
-      - Multi-word query (e.g. "Product Manager"): ALL meaningful words must
-        appear in the title. This prevents "Marketing Manager" matching when
-        the user searched "Product Manager" (only 'manager' would match).
-      - Single-word query (e.g. "Python"): any occurrence in title is enough.
-      - Falls back to all jobs if fewer than 3 pass (prevents empty results).
+      - Multi-word query ("Product Manager"): ALL words must appear in title.
+        Prevents "Marketing Manager" matching when only 'manager' overlaps.
+      - Single-word query ("Python"): any occurrence in title is fine.
+      - Minimum word length = 2 chars so "PM", "QA", "ML" are handled.
+      - Falls back to all jobs if < 3 pass (avoids empty page).
     """
     query_words = [
         w.lower() for w in re.split(r"[\s,/]+", query)
-        if len(w) >= 3 and w.lower() not in _STOP_WORDS
+        if len(w) >= 2 and w.lower() not in _STOP_WORDS
     ]
     if not query_words:
         return jobs
 
     is_multi_word = len(query_words) >= 2
-
     relevant = []
     for job in jobs:
         title_lower = job.get("role_title", "").lower()
         if is_multi_word:
-            # ALL words must appear in the title
             if all(qw in title_lower for qw in query_words):
                 relevant.append(job)
         else:
-            # Single word — any match is fine
             if any(qw in title_lower for qw in query_words):
                 relevant.append(job)
 
-    # Safety: if too strict and left < 3 results, return all (avoid empty page)
     return relevant if len(relevant) >= 3 else jobs
-
 
 
 def _extract_keywords(text: str) -> list[str]:
