@@ -102,12 +102,12 @@ function OutreachModal({ opp, onClose }) {
               </label>
               <input
                 className="input"
-                placeholder="e.g. stripe.com"
+                placeholder="e.g. google.com, stripe.com"
                 value={domain}
                 onChange={e => setDomain(e.target.value)}
                 autoFocus
               />
-              <span className="text-xs text-secondary">Used to find the right contacts via Hunter → Apollo → RocketReach</span>
+              <span className="text-xs text-secondary">The company's own domain — NOT the job board URL. Used to find the right contacts via Hunter → Apollo → RocketReach</span>
             </div>
 
             <div className="input-group">
@@ -167,9 +167,18 @@ function OutreachModal({ opp, onClose }) {
                 </div>
               </div>
               {(result.found?.total_found || 0) === 0 && (
-                <p className="text-sm text-secondary" style={{ textAlign: 'center' }}>
-                  No contacts found automatically. You can add them manually in the campaign.
-                </p>
+                <div style={{ textAlign: 'center' }}>
+                  <p className="text-sm text-secondary" style={{ marginBottom: 8 }}>
+                    No contacts found automatically.
+                  </p>
+                  <p className="text-xs text-secondary">
+                    Check that the domain is the <strong>company's own domain</strong> (e.g. <code>google.com</code>), not a job board URL.
+                    Then retry from the campaign page.
+                  </p>
+                  <p className="text-xs text-secondary" style={{ marginTop: 6 }}>
+                    Or add contacts manually inside the campaign.
+                  </p>
+                </div>
               )}
               {result.draftsGenerated > 0 && (
                 <p className="text-sm text-secondary" style={{ textAlign: 'center', marginTop: 8 }}>
@@ -240,15 +249,18 @@ export default function Opportunities() {
           return;
         }
 
-        // 2. Auto-search — try resume profile role, then default
+        // 2. Auto-search — try resume profile role + location, then default
         let autoQuery = 'software engineer';
+        let autoLocation = '';
         try {
           const resumeProfile = await api.getResumeProfile();
           if (resumeProfile?.role) autoQuery = resumeProfile.role;
-        } catch { /* resume not uploaded yet, use default */ }
+          if (resumeProfile?.location) autoLocation = resumeProfile.location;
+        } catch { /* resume not uploaded yet, use defaults */ }
 
         setQuery(autoQuery);
-        await runSearch(autoQuery, '');
+        if (autoLocation) setLocation(autoLocation);
+        await runSearch(autoQuery, autoLocation);
       } catch (err) {
         // Silently ignore — user can still search manually
       }

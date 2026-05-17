@@ -19,16 +19,34 @@ router = APIRouter(prefix="/api/opportunities", tags=["opportunities"])
 scorer = OpportunityScorer()
 
 
+# Job board URLs are not company domains — return empty so the outreach modal
+# forces the user to type the actual company domain (e.g. google.com, stripe.com)
+_JOB_BOARD_DOMAINS = {
+    "linkedin.com", "indeed.com", "glassdoor.com", "remotive.com",
+    "arbeitnow.com", "jsearch.p.rapidapi.com", "ziprecruiter.com",
+    "lever.co", "greenhouse.io", "workable.com", "jobs.ashbyhq.com",
+    "wellfound.com", "angel.co", "himalayas.app", "themuse.com",
+}
+
+
 def _extract_domain(url: str) -> str:
-    """Extract bare domain from a URL, e.g. 'https://stripe.com/jobs/123' → 'stripe.com'."""
+    """Extract bare company domain from a URL.
+
+    Returns empty string for known job board URLs (linkedin.com, indeed.com,
+    etc.) since those are the job board's domain, not the hiring company's.
+    The outreach modal needs the *company* domain (e.g. google.com, stripe.com)
+    for Hunter/Apollo contact search.
+    """
     if not url:
         return ""
     try:
         from urllib.parse import urlparse
         parsed = urlparse(url)
-        host = parsed.netloc or parsed.path
-        # strip www.
-        return host.replace("www.", "").split("/")[0]
+        host = (parsed.netloc or parsed.path).replace("www.", "").split("/")[0].lower()
+        # Don't return job board domains — they're useless for contact search
+        if any(host == jb or host.endswith("." + jb) for jb in _JOB_BOARD_DOMAINS):
+            return ""
+        return host
     except Exception:
         return ""
 
