@@ -205,6 +205,11 @@ class CompanyInfoCollector:
         return {"company_size": None, "industry": None, "website": None, "remote_friendly": None}
 
 
+def _normalize_query(query: str) -> str:
+    """Normalize a search query — default to 'software engineer' if empty."""
+    return (query or "").strip() or "software engineer"
+
+
 async def search_jobs_auto(query: str, location: str = "") -> tuple[list[dict], str]:
     """Waterfall job search: JSearch (premium key) → LinkedIn (free, always available).
 
@@ -215,7 +220,7 @@ async def search_jobs_auto(query: str, location: str = "") -> tuple[list[dict], 
         (list of normalized job dicts, source_name used)
     """
     # Edge case: empty or whitespace-only query
-    query = (query or "").strip() or "software engineer"
+    query = _normalize_query(query)
 
     jsearch = JSearchCollector()
     if jsearch.has_key:
