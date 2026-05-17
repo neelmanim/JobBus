@@ -54,6 +54,10 @@ class SendStartRequest(BaseModel):
     dry_run: bool = True  # Default TRUE = sandbox, must explicitly set False
 
 
+class CampaignStatusUpdate(BaseModel):
+    status: CampaignStatus
+
+
 class CampaignSettingsUpdate(BaseModel):
     sandbox_mode: Optional[bool] = None
     send_delay_seconds: Optional[int] = None
@@ -93,12 +97,12 @@ async def get_campaign(campaign_id: str, user: dict = Depends(get_current_user))
 @router.put("/{campaign_id}/status")
 async def update_campaign_status(
     campaign_id: str,
-    new_status: CampaignStatus,
+    body: CampaignStatusUpdate,
     user: dict = Depends(get_current_user),
 ):
     """Update campaign status."""
     try:
-        return engine.update_status(campaign_id, user["user_id"], new_status)
+        return engine.update_status(campaign_id, user["user_id"], body.status)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -552,6 +556,47 @@ async def update_campaign_settings(
 # ─────────────────────────────────────────────────────────────
 # Contact management (enhanced)
 # ─────────────────────────────────────────────────────────────
+
+@router.get("/{campaign_id}/contacts")
+async def get_campaign_contacts(
+    campaign_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Get all contacts associated with a campaign."""
+    supabase = get_supabase_admin()
+
+    # Verify campaign ownership
+    campaign_result = supabase.table("campaigns").select(
+        "opportunity_id"
+    ).eq("id", campaign_id).eq("user_id", user["user_id"]).single().execute()
+    if not campaign_result.data:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    campaign = campaign_result.data
+
+    # Find contacts linked via campaign_contacts join table or opportunity_id
+    cc_result = supabase.table("campaign_contacts").select(
+        "contact_id"
+    ).eq("campaign_id", campaign_id).execute()
+
+    contact_ids = [r["contact_id"] for r in (cc_result.data or [])]
+
+    # Also include contacts linked via opportunity_id
+    if not contact_ids and campaign.get("opportunity_id"):
+        opp_contacts = supabase.table("contacts").select("id").eq(
+            "opportunity_id", campaign["opportunity_id"]
+        ).eq("user_id", user["user_id"]).execute()
+        contact_ids = [r["id"] for r in (opp_contacts.data or [])]
+
+    if not contact_ids:
+        return []
+
+    contacts_result = supabase.table("contacts").select("*").in_(
+        "id", contact_ids
+    ).execute()
+    return contacts_result.data or []
+
+
 
 @router.post("/{campaign_id}/contacts")
 async def add_campaign_contacts(

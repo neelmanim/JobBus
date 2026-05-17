@@ -44,10 +44,28 @@ function OutreachModal({ opp, onClose }) {
 
       // 3 — attach contacts to campaign
       if (found?.contacts?.length) {
-        await api.addCampaignContacts(campaign.id, found.contacts);
+        const contactIds = found.contacts.map(c => c.id || c).filter(Boolean);
+        if (contactIds.length) {
+          await api.addCampaignContacts(campaign.id, contactIds);
+        }
       }
 
-      setResult({ campaign, found });
+      // 4 — auto-generate AI drafts if contacts were found
+      let draftsGenerated = 0;
+      if (found?.total_found > 0) {
+        try {
+          const draftResult = await api.generateDrafts(campaign.id, {
+            regenerate: false,
+            tone: 'professional',
+          });
+          draftsGenerated = draftResult?.generated || 0;
+        } catch (draftErr) {
+          // Non-fatal — user can generate manually from Campaign Detail
+          console.warn('Auto-draft generation failed:', draftErr.message);
+        }
+      }
+
+      setResult({ campaign, found, draftsGenerated });
       setStep('done');
     } catch (err) {
       toast.error(err.message || 'Something went wrong');
@@ -127,8 +145,8 @@ function OutreachModal({ opp, onClose }) {
             <div className="finding-animation">
               <Loader size={36} className="spin-icon" style={{ color: 'var(--brand-primary-light)' }} />
             </div>
-            <p className="font-medium" style={{ marginTop: 16 }}>Creating campaign…</p>
-            <p className="text-sm text-secondary">Searching Hunter → Apollo → RocketReach for contacts at <strong>{company}</strong></p>
+            <p className="font-medium" style={{ marginTop: 16 }}>Setting up your campaign…</p>
+            <p className="text-sm text-secondary">Finding contacts → Generating AI drafts for <strong>{company}</strong></p>
           </div>
         )}
 
@@ -137,20 +155,25 @@ function OutreachModal({ opp, onClose }) {
           <div className="modal-body">
             <div className="outreach-success">
               <div className="success-icon">🎯</div>
-              <h3>Campaign created!</h3>
+              <h3>Campaign ready!</h3>
               <div className="success-stats">
                 <div className="success-stat">
                   <span className="success-num">{result.found?.total_found || 0}</span>
                   <span className="text-secondary text-sm">contacts found</span>
                 </div>
                 <div className="success-stat">
-                  <span className="success-num">{result.found?.provider_used || '—'}</span>
-                  <span className="text-secondary text-sm">via</span>
+                  <span className="success-num">{result.draftsGenerated || 0}</span>
+                  <span className="text-secondary text-sm">drafts generated</span>
                 </div>
               </div>
               {(result.found?.total_found || 0) === 0 && (
                 <p className="text-sm text-secondary" style={{ textAlign: 'center' }}>
                   No contacts found automatically. You can add them manually in the campaign.
+                </p>
+              )}
+              {result.draftsGenerated > 0 && (
+                <p className="text-sm text-secondary" style={{ textAlign: 'center', marginTop: 8 }}>
+                  ✓ Drafts are ready to review and approve.
                 </p>
               )}
             </div>
@@ -160,7 +183,7 @@ function OutreachModal({ opp, onClose }) {
                 className="btn btn-primary"
                 onClick={() => navigate(`/campaigns/${result.campaign.id}`)}
               >
-                Open Campaign <ArrowRight size={15} />
+                {result.draftsGenerated > 0 ? 'Review Drafts' : 'Open Campaign'} <ArrowRight size={15} />
               </button>
             </div>
           </div>

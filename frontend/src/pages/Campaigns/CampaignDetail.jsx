@@ -43,7 +43,11 @@ function DraftCard({ draft, campaignId, onRefresh }) {
   async function handleAction(action) {
     setApproving(true);
     try {
-      await api.approveDraft(campaignId, { draft_id: draft.id, action, body: editMode ? editedBody : undefined });
+      await api.approveDraft(campaignId, {
+        draft_id: draft.id,
+        action,
+        edited_body: editMode ? editedBody : undefined,
+      });
       toast.success(action === 'approve' ? 'Draft approved ✓' : 'Draft rejected');
       onRefresh();
     } catch (err) {
