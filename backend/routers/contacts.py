@@ -60,7 +60,7 @@ class ContactResponse(BaseModel):
 
 
 class FindContactRequest(BaseModel):
-    opportunity_id: str
+    opportunity_id: Optional[str] = None  # None is valid — campaign may not have an opportunity
     company: str
     domain: str
     target_titles: Optional[list[str]] = None
@@ -316,10 +316,11 @@ async def find_contact(
         saved_rows = insert_result.data
         saved = len(saved_rows)
 
-    # Also return already-existing contacts for this opportunity
-    all_contacts_result = supabase.table("contacts").select("*").eq(
-        "user_id", user_id
-    ).eq("opportunity_id", request.opportunity_id).execute()
+    # Also return already-existing contacts for this opportunity (or all user contacts if no opportunity)
+    all_contacts_q = supabase.table("contacts").select("*").eq("user_id", user_id)
+    if request.opportunity_id:
+        all_contacts_q = all_contacts_q.eq("opportunity_id", request.opportunity_id)
+    all_contacts_result = all_contacts_q.execute()
 
     return FindContactResponse(
         contacts=[_row_to_contact(r) for r in all_contacts_result.data],

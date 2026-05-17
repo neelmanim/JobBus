@@ -98,7 +98,7 @@ class TestAIProviderPreference:
             mock_supabase.return_value.table.return_value.update.return_value \
                 .eq.return_value.execute.return_value = None
             resp = make_client().put("/api/settings/ai-provider",
-                json={"provider": "groq", "model": "quality"},
+                json={"ai_provider": "groq", "model": "quality"},
                 headers=auth_headers())
             assert resp.status_code == 200
             assert resp.json()["ai_provider"] == "groq"
@@ -106,7 +106,7 @@ class TestAIProviderPreference:
     def test_rejects_invalid_provider(self):
         with patch("routers.settings.get_supabase_admin"):
             resp = make_client().put("/api/settings/ai-provider",
-                json={"provider": "invalid", "model": "auto"},
+                json={"ai_provider": "invalid", "model": "auto"},
                 headers=auth_headers())
             assert resp.status_code == 422
 
@@ -117,14 +117,14 @@ class TestSearchProviderPreference:
             mock_supabase.return_value.table.return_value.update.return_value \
                 .eq.return_value.execute.return_value = None
             resp = make_client().put("/api/settings/search-provider",
-                json={"provider": "apollo"},
+                json={"search_provider": "apollo"},
                 headers=auth_headers())
             assert resp.status_code == 200
 
     def test_rejects_invalid(self):
         with patch("routers.settings.get_supabase_admin"):
             resp = make_client().put("/api/settings/search-provider",
-                json={"provider": "linkedin"},
+                json={"search_provider": "linkedin"},
                 headers=auth_headers())
             assert resp.status_code == 422
 

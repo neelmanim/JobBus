@@ -96,7 +96,7 @@ class ApiClient {
   listCampaigns()              { return this.get('/api/campaigns/'); }
   getCampaign(id)              { return this.get(`/api/campaigns/${id}`); }
   updateCampaignStatus(id, s)  { return this.put(`/api/campaigns/${id}/status`, { status: s }); }
-  addCampaignContacts(id, c)   { return this.post(`/api/campaigns/${id}/contacts`, { contacts: c }); }
+  addCampaignContacts(id, c)   { return this.post(`/api/campaigns/${id}/contacts`, c); }
   getCampaignAnalytics(id)     { return this.get(`/api/campaigns/${id}/analytics`); }
   getCampaignContacts(id)      { return this.get(`/api/campaigns/${id}/contacts`); }
 
