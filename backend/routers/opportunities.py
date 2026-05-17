@@ -46,12 +46,37 @@ async def search_opportunities(
     Works without a resume — scoring uses the query as the role when no
     resume profile exists.  Resume improves match quality but is not required.
     """
+    # ── Cache check: skip API if fresh results exist (< 6 hours old) ──────────
+    supabase = get_supabase_admin()
+    cache_cutoff = (
+        __import__("datetime").datetime.utcnow()
+        - __import__("datetime").timedelta(hours=6)
+    ).isoformat()
+
+    cached = supabase.table("opportunities").select("*") \
+        .eq("user_id", user["user_id"]) \
+        .eq("search_query", query.lower().strip()) \
+        .gte("updated_at", cache_cutoff) \
+        .order("score", desc=True) \
+        .execute()
+
+    if cached.data and len(cached.data) >= 3:
+        rows = []
+        for row in cached.data:
+            row["company"] = row.get("company_name", "")
+            row["title"]   = row.get("role_title", "")
+            row["url"]     = row.get("job_url", "")
+            row["domain"]  = _extract_domain(row.get("job_url", ""))
+            rows.append(row)
+        return {"opportunities": rows, "count": len(rows), "source": "cache"}
+
+    # ── Cache miss: call external API ─────────────────────────────────────────
     # Resume improves scoring quality but is NOT a hard gate anymore.
     profile = get_resume_profile(user["user_id"])
     resume_dict = {
-        "name": profile.name if profile else "",
-        "role": profile.role if profile else query,   # fall back to search query
-        "skills": profile.skills if profile else [],
+        "name":         profile.name   if profile else "",
+        "role":         profile.role   if profile else query,
+        "skills":       profile.skills if profile else [],
         "achievements": profile.achievements if profile else [],
     }
 
@@ -69,7 +94,6 @@ async def search_opportunities(
     scored = scorer.get_top_picks(jobs, resume_dict, max_count=20)
 
     # Persist opportunities to DB using explicit deduplication (no upsert constraint needed)
-    supabase = get_supabase_admin()
     saved = []
     logger = __import__("logging").getLogger(__name__)
 
@@ -77,7 +101,8 @@ async def search_opportunities(
         score_result = opp.pop("_score")
         job_url = (opp.get("job_url") or "").strip()
         data = {
-            "user_id": user["user_id"],
+            "user_id":      user["user_id"],
+            "search_query": query.lower().strip(),   # for cache lookup
             "company_name": opp.get("company_name", ""),
             "role_title":   opp.get("role_title", ""),
             "job_url":      job_url or None,
@@ -93,7 +118,6 @@ async def search_opportunities(
             "source":    opp.get("source", source),
         }
         try:
-            # Deduplicate without relying on a DB UNIQUE constraint
             if job_url:
                 existing = supabase.table("opportunities").select("id") \
                     .eq("user_id", user["user_id"]).eq("job_url", job_url).execute()
@@ -117,7 +141,6 @@ async def search_opportunities(
                 row["domain"]  = _extract_domain(row.get("job_url", ""))
                 saved.append(row)
             else:
-                # DB write failed but we still have the scored data — return it anyway
                 opp["company"] = opp.get("company_name", "")
                 opp["title"]   = opp.get("role_title", "")
                 opp["url"]     = opp.get("job_url", "")
@@ -128,7 +151,6 @@ async def search_opportunities(
 
         except Exception as e:
             logger.warning(f"DB write failed for opportunity, returning in-memory: {e}")
-            # Still surface the result to the user even if DB write fails
             opp["company"] = opp.get("company_name", "")
             opp["title"]   = opp.get("role_title", "")
             opp["url"]     = job_url

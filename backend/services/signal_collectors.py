@@ -203,9 +203,12 @@ _STOP_WORDS = {
 def _filter_by_title_relevance(jobs: list[dict], query: str) -> list[dict]:
     """Keep only jobs where the role title is relevant to the search query.
 
-    Splits the query into meaningful words (strips stop-words), then keeps
-    a job only if at least one query word appears in the role title.
-    Falls back to all jobs if query has no meaningful words.
+    Strategy:
+      - Multi-word query (e.g. "Product Manager"): ALL meaningful words must
+        appear in the title. This prevents "Marketing Manager" matching when
+        the user searched "Product Manager" (only 'manager' would match).
+      - Single-word query (e.g. "Python"): any occurrence in title is enough.
+      - Falls back to all jobs if fewer than 3 pass (prevents empty results).
     """
     query_words = [
         w.lower() for w in re.split(r"[\s,/]+", query)
@@ -214,12 +217,23 @@ def _filter_by_title_relevance(jobs: list[dict], query: str) -> list[dict]:
     if not query_words:
         return jobs
 
+    is_multi_word = len(query_words) >= 2
+
     relevant = []
     for job in jobs:
         title_lower = job.get("role_title", "").lower()
-        if any(qw in title_lower for qw in query_words):
-            relevant.append(job)
-    return relevant
+        if is_multi_word:
+            # ALL words must appear in the title
+            if all(qw in title_lower for qw in query_words):
+                relevant.append(job)
+        else:
+            # Single word — any match is fine
+            if any(qw in title_lower for qw in query_words):
+                relevant.append(job)
+
+    # Safety: if too strict and left < 3 results, return all (avoid empty page)
+    return relevant if len(relevant) >= 3 else jobs
+
 
 
 def _extract_keywords(text: str) -> list[str]:
