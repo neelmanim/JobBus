@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from middleware.auth_middleware import get_current_user
+from middleware.auth_middleware import get_current_user, invalidate_user_cache
 from services.credential_service import get_credential_service
 from models.schemas import SMTPCredentialCreate, SMTPCredentialStatus
 from database import get_supabase_admin
@@ -251,15 +251,19 @@ async def get_search_quota(
     cred = get_credential_service()
 
     # ── Load cached quota (stored in user_profiles JSONB column) ─
+    # Gracefully skip if columns don't exist yet (migration not run)
     CACHE_TTL = timedelta(hours=1)
-
-    profile_row = supabase.table("user_profiles").select(
-        "quota_cache, quota_cache_at"
-    ).eq("user_id", user_id).single().execute()
-    profile = profile_row.data or {}
-
-    cached_at_raw = profile.get("quota_cache_at")
-    cached_data   = profile.get("quota_cache") or {}
+    cached_at_raw = None
+    cached_data   = {}
+    try:
+        profile_row = supabase.table("user_profiles").select(
+            "quota_cache, quota_cache_at"
+        ).eq("user_id", user_id).single().execute()
+        profile = profile_row.data or {}
+        cached_at_raw = profile.get("quota_cache_at")
+        cached_data   = profile.get("quota_cache") or {}
+    except Exception:
+        pass  # columns don't exist yet — skip cache
 
     cache_is_fresh = False
     if cached_at_raw and not refresh:
@@ -358,6 +362,7 @@ async def set_ai_provider(
         "ai_provider": request.ai_provider,
         "ai_model": request.model,
     }).eq("user_id", user["user_id"]).execute()
+    invalidate_user_cache(user["user_id"])  # bust profile cache
 
     return {"ai_provider": request.ai_provider, "ai_model": request.model}
 
@@ -376,6 +381,7 @@ async def set_search_provider(
     supabase.table("user_profiles").update({
         "search_provider": request.search_provider,
     }).eq("user_id", user["user_id"]).execute()
+    invalidate_user_cache(user["user_id"])  # bust profile cache
 
     return {"search_provider": request.search_provider}
 

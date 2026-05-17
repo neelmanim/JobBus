@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from middleware.auth_middleware import get_current_user, get_jwt_user, require_admin
+from middleware.auth_middleware import get_current_user, get_jwt_user, require_admin, invalidate_user_cache
 from services.auth_service import InviteService, UserService
 from services.credential_service import get_credential_service
 from database import get_supabase_admin
@@ -129,7 +129,9 @@ async def update_my_mode(
     user: dict = Depends(get_current_user),
 ):
     """Switch between beginner/advanced mode."""
-    return UserService.update_mode(user["user_id"], request.mode)
+    result = UserService.update_mode(user["user_id"], request.mode)
+    invalidate_user_cache(user["user_id"])  # bust profile cache
+    return result
 
 
 # ─────────────────────────────────────────────────────────────
@@ -245,7 +247,65 @@ async def complete_onboarding(
         import logging
         logging.getLogger(__name__).warning("Onboarding partial errors: %s", errors)
 
+    invalidate_user_cache(user_id)  # bust profile cache after onboarding write
     profile = UserService.get_profile(user_id)
     if not profile:
         raise HTTPException(status_code=500, detail="Profile not found after onboarding")
     return profile
+
+
+# ─────────────────────────────────────────────────────────────
+# /api/init  — bulk page-init endpoint
+# Returns all data a page needs in ONE request instead of 4-6
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/init")
+async def app_init(user: dict = Depends(get_current_user)):
+    """
+    Single bulk endpoint called once on app load.
+    Returns: profile, smtp status, provider key flags, and email style.
+    Eliminates 4+ sequential API calls on every page mount.
+    """
+    import asyncio
+    from services.credential_service import get_credential_service
+
+    user_id  = user["user_id"]
+    supabase = get_supabase_admin()
+    cred     = get_credential_service()
+
+    async def _smtp():
+        try:
+            creds = cred.get_decrypted(user_id)
+            return {"configured": True, "smtp_user": creds.get("smtp_user", ""),
+                    "smtp_host": creds.get("smtp_host", ""), "sender_name": creds.get("sender_name", "")}
+        except Exception:
+            return {"configured": False}
+
+    async def _providers():
+        try:
+            return cred.get_provider_status(user_id)
+        except Exception:
+            return {}
+
+    async def _style():
+        try:
+            r = supabase.table("user_profiles").select(
+                "signature_name,signature_title,signature_linkedin,custom_instructions,"
+                "send_delay_seconds,max_emails_per_day,business_hours_only,"
+                "ai_provider,ai_model,search_provider"
+            ).eq("user_id", user_id).single().execute()
+            return r.data or {}
+        except Exception:
+            return {}
+
+    smtp_data, providers, style = await asyncio.gather(
+        _smtp(), _providers(), _style(),
+    )
+
+    return {
+        "profile":   {k: user.get(k) for k in ["user_id","email","display_name","avatar_url",
+                        "mode","is_admin","onboarding_complete","ai_provider","ai_model","search_provider"]},
+        "smtp":      smtp_data,
+        "providers": providers,
+        "style":     style,
+    }

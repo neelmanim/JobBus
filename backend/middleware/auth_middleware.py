@@ -11,6 +11,7 @@ Supports both:
 
 from __future__ import annotations
 
+import time
 import httpx
 from fastapi import Request, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -19,8 +20,39 @@ from config import get_settings
 from database import get_supabase_admin
 
 
+# ── JWKS cache ───────────────────────────────────────────────────
 # Cache JWKS keys to avoid fetching on every request
 _jwks_cache: dict = {}
+
+
+# ── User profile TTL cache ────────────────────────────────────────
+# Eliminates the Supabase round-trip (~200-500ms) on every API call.
+# TTL = 5 minutes. Max 1000 entries (covers most single-user sessions).
+_profile_cache: dict[str, tuple[dict, float]] = {}  # user_id -> (profile, expires_at)
+_PROFILE_TTL = 300  # seconds
+_CACHE_MAX    = 1000
+
+
+def _get_cached_profile(user_id: str) -> dict | None:
+    entry = _profile_cache.get(user_id)
+    if entry and time.monotonic() < entry[1]:
+        return entry[0]
+    _profile_cache.pop(user_id, None)
+    return None
+
+
+def _set_cached_profile(user_id: str, profile: dict) -> None:
+    if len(_profile_cache) >= _CACHE_MAX:
+        # Evict oldest 20% when full
+        oldest = sorted(_profile_cache.items(), key=lambda x: x[1][1])[:_CACHE_MAX // 5]
+        for k, _ in oldest:
+            _profile_cache.pop(k, None)
+    _profile_cache[user_id] = (profile, time.monotonic() + _PROFILE_TTL)
+
+
+def invalidate_user_cache(user_id: str) -> None:
+    """Call this whenever a user's profile is updated so the cache refreshes."""
+    _profile_cache.pop(user_id, None)
 
 
 def _get_supabase_jwks(supabase_url: str) -> list:
@@ -113,17 +145,22 @@ async def get_current_user(request: Request) -> dict:
             detail="Token missing user ID",
         )
 
-    # Check if user is active
-    supabase = get_supabase_admin()
-    result = supabase.table("user_profiles").select("*").eq("user_id", user_id).execute()
+    # ── Profile lookup with TTL cache ─────────────────────────────
+    # Cache hit: skip Supabase entirely (~200-500ms saved per request)
+    profile = _get_cached_profile(user_id)
+    if profile is None:
+        supabase = get_supabase_admin()
+        result = supabase.table("user_profiles").select("*").eq("user_id", user_id).execute()
 
-    if not result.data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User profile not found. Please complete onboarding.",
-        )
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User profile not found. Please complete onboarding.",
+            )
 
-    profile = result.data[0]
+        profile = result.data[0]
+        _set_cached_profile(user_id, profile)
+
     if not profile.get("is_active", True):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

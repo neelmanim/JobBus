@@ -134,9 +134,10 @@ export default function Settings() {
   const [aiModel, setAiModel] = useState('auto');
   const [searchProvider, setSearchProvider] = useState('hunter');
   const [savingPref, setSavingPref] = useState(false);
-  const autoTestedRef = useRef(false); // only auto-test once per session
+  const autoTestedRef = useRef(false);
   const [quota, setQuota] = useState(null);
   const [quotaLoading, setQuotaLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true); // single loading gate
 
   // ── Email Style ───────────────────────────────────────────
   const [style, setStyle] = useState({ signature_name: '', signature_title: '', signature_linkedin: '', custom_instructions: '' });
@@ -146,13 +147,60 @@ export default function Settings() {
   const [defaults, setDefaults] = useState({ send_delay_seconds: 120, max_emails_per_day: 20, sandbox_mode: true });
   const [savingDefaults, setSavingDefaults] = useState(false);
 
+  // ── Parallel initializer: one round-trip instead of 3+ sequential ───
   useEffect(() => {
-    loadSmtpStatus();
-    loadProviderStatus();
-    loadEmailStyle();
+    (async () => {
+      try {
+        // Fire all independent fetches at the same time
+        const [initData, quotaData] = await Promise.all([
+          api.getAppInit(),
+          api.getSearchQuota(),
+        ]);
+
+        // SMTP
+        if (initData?.smtp) setSmtpStatus(initData.smtp.configured ? initData.smtp : null);
+
+        // Providers
+        const prov = initData?.providers || {};
+        setProviderStatus(prov);
+        setAiProvider(initData?.style?.ai_provider || prov.ai_provider || 'groq');
+        setAiModel(initData?.style?.ai_model || prov.ai_model || 'auto');
+        setSearchProvider(initData?.style?.search_provider || prov.search_provider || 'hunter');
+
+        // Style
+        if (initData?.style) setStyle(s => ({ ...s, ...initData.style }));
+
+        // Quota
+        if (quotaData) setQuota(quotaData);
+
+        // Auto-test configured providers once (background, after UI renders)
+        if (!autoTestedRef.current) {
+          autoTestedRef.current = true;
+          setTimeout(async () => {
+            const allFields = [
+              ...AI_PROVIDERS.map(p => p.field),
+              ...SEARCH_PROVIDERS.map(p => p.field),
+            ];
+            for (const field of allFields) {
+              if (prov[field]) {
+                await new Promise(r => setTimeout(r, 400));
+                handleTestKey(field, true);
+              }
+            }
+          }, 500);
+        }
+      } catch (e) {
+        // Fallback: load individually if /init fails
+        loadSmtpStatus();
+        loadProviderStatus();
+        loadEmailStyle();
+      } finally {
+        setInitializing(false);
+      }
+    })();
   }, []);
 
-  // ── Loaders ──────────────────────────────────────────────
+  // ── Individual loaders (fallback + save handlers) ──────────────
   async function loadSmtpStatus() {
     try { setSmtpStatus(await api.getSmtpStatus()); } catch { setSmtpStatus(null); }
   }
@@ -160,28 +208,10 @@ export default function Settings() {
     try {
       const data = await api.getProviderStatus();
       setProviderStatus(data || {});
-      // Auto-load quota whenever providers tab is active and keys exist
       if (data?.hunter_key) loadQuota();
       setAiProvider(data.ai_provider || 'groq');
       setAiModel(data.ai_model || 'auto');
       setSearchProvider(data.search_provider || 'hunter');
-
-      // Auto-test all configured providers once so chips show Connected/Failed immediately
-      if (!autoTestedRef.current) {
-        autoTestedRef.current = true;
-        const allFields = [
-          ...AI_PROVIDERS.map(p => p.field),
-          ...SEARCH_PROVIDERS.map(p => p.field),
-        ];
-        // Run sequentially to avoid hammering external APIs in parallel
-        for (const field of allFields) {
-          if (data[field]) {
-            // Small delay between each so the UI doesn't flicker all at once
-            await new Promise(r => setTimeout(r, 400));
-            handleTestKey(field, true); // silent — no toasts on auto-test
-          }
-        }
-      }
     } catch { /* silent */ }
   }
   async function loadEmailStyle() {

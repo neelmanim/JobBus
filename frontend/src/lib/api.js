@@ -124,6 +124,7 @@ class ApiClient {
   setAIProvider(data)          { return this.put('/api/settings/ai-provider', data); }  // legacy
   setSearchProvider(provider)  { return this.put('/api/settings/search-provider', typeof provider === 'string' ? { search_provider: provider } : provider); }
   getSearchQuota(refresh=false){ return this.get(`/api/settings/search-quota${refresh ? '?refresh=true' : ''}`); }
+  getAppInit()                 { return this.get('/api/auth/init'); }
 
   // ── Settings: Email Style ──
   getEmailStyle()              { return this.get('/api/settings/email-style'); }
