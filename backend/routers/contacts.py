@@ -310,20 +310,35 @@ async def find_contact(
         })
 
     saved = 0
+    saved_ids  = []
     saved_rows = []
     if to_insert:
         insert_result = supabase.table("contacts").insert(to_insert).execute()
-        saved_rows = insert_result.data
+        saved_rows = insert_result.data or []
         saved = len(saved_rows)
+        saved_ids = [r["id"] for r in saved_rows]
 
-    # Also return already-existing contacts for this opportunity (or all user contacts if no opportunity)
-    all_contacts_q = supabase.table("contacts").select("*").eq("user_id", user_id)
+    # Build the full contacts list to return:
+    # Newly saved rows + any existing rows that matched (skipped deduplication)
+    existing_rows_used = [
+        r for r in existing_result.data
+        if r.get("email", "").lower() in {x["email"].lower() for x in (to_insert or [])}
+    ] if not saved_ids else []
+
+    # Fetch any existing contacts for this opportunity that were already saved
+    already_saved_q = supabase.table("contacts").select("*").eq("user_id", user_id)
     if request.opportunity_id:
-        all_contacts_q = all_contacts_q.eq("opportunity_id", request.opportunity_id)
-    all_contacts_result = all_contacts_q.execute()
+        already_saved_q = already_saved_q.eq("opportunity_id", request.opportunity_id)
+    elif saved_ids:
+        already_saved_q = already_saved_q.in_("id", saved_ids)
+    already_saved = already_saved_q.execute().data or []
+
+    # Combine: new saves + previously existing for this opp
+    # Prefer saved_rows (have full data) and fall back to already_saved
+    all_rows = saved_rows if saved_rows else already_saved
 
     return FindContactResponse(
-        contacts=[_row_to_contact(r) for r in all_contacts_result.data],
+        contacts=[_row_to_contact(r) for r in all_rows],
         provider_used=provider_used,
         total_found=len(results),
         saved_count=saved,

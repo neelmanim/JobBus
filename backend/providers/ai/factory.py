@@ -45,15 +45,22 @@ def get_ai_provider(user: dict) -> "GroqAIProvider | GeminiAIProvider | OpenAIPr
     user_id = user["user_id"]
     cred = get_credential_service()
 
-    # Look up user preferences
-    supabase = get_supabase_admin()
-    profile_result = supabase.table("user_profiles").select(
-        "ai_provider, ai_model"
-    ).eq("user_id", user_id).single().execute()
+    # Use ai_provider already in the user dict (put there by get_current_user / profile cache)
+    # Fall back to a fresh DB read only if not present
+    selected_provider = user.get("ai_provider")
+    selected_model    = user.get("ai_model")
 
-    profile = profile_result.data or {}
-    selected_provider = profile.get("ai_provider", "groq")
-    selected_model = profile.get("ai_model", "auto")
+    if not selected_provider:
+        supabase = get_supabase_admin()
+        profile_result = supabase.table("user_profiles").select(
+            "ai_provider, ai_model"
+        ).eq("user_id", user_id).single().execute()
+        profile = profile_result.data or {}
+        selected_provider = profile.get("ai_provider", "groq")
+        selected_model    = profile.get("ai_model", "auto")
+
+    selected_provider = selected_provider or "groq"
+    selected_model    = selected_model    or "auto"
 
     # Try user's own key first
     try:
