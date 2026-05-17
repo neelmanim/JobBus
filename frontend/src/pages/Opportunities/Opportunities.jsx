@@ -16,22 +16,56 @@ function OutreachModal({ opp, onClose }) {
   const toast = useToast();
   const navigate = useNavigate();
   const [step, setStep] = useState('setup');   // setup | finding | done
-  const [domain, setDomain]       = useState(opp.domain || '');
-  const [angle, setAngle]         = useState('');
-  const [result, setResult]       = useState(null);
-  const [quota, setQuota]         = useState(null);
-
-  // Load quota silently on mount — no spinner, never blocks the user
-  useEffect(() => {
-    api.getSearchQuota().then(q => setQuota(q)).catch(() => {});
-  }, []);
-
+  const [domain, setDomain]         = useState(opp.domain || '');
+  const [domainDetecting, setDomainDetecting] = useState(false);
+  const [domainSource, setDomainSource]       = useState(opp.domain ? 'manual' : null); // null | 'auto' | 'heuristic' | 'manual'
+  const [angle, setAngle]           = useState('');
+  const [result, setResult]         = useState(null);
+  const [quota, setQuota]           = useState(null);
 
   const company = opp.company || opp.company_name || 'Company';
   const title   = opp.title   || opp.role_title   || 'Untitled Role';
 
+  // Auto-detect domain on mount using Clearbit Autocomplete (free, no key)
+  useEffect(() => {
+    if (opp.domain) return;  // already have it from the opportunity
+
+    async function detectDomain() {
+      setDomainDetecting(true);
+      try {
+        // Clearbit Autocomplete — free, no key, returns {domain, name, logo}
+        const res = await fetch(
+          `https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(company)}`,
+          { signal: AbortSignal.timeout(4000) }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.length && data[0]?.domain) {
+            setDomain(data[0].domain);
+            setDomainSource('auto');
+            return;
+          }
+        }
+      } catch { /* network blocked or timeout — fall through */ }
+
+      // Heuristic fallback: strip spaces/punctuation and append .com
+      const heuristic = company
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '')
+        + '.com';
+      setDomain(heuristic);
+      setDomainSource('heuristic');
+    }
+
+    detectDomain().finally(() => setDomainDetecting(false));
+
+    // Load quota silently in parallel
+    api.getSearchQuota().then(q => setQuota(q)).catch(() => {});
+  }, []);
+
   async function handleStart() {
-    if (!domain.trim()) { toast.error('Enter a company domain to find contacts'); return; }
+    const d = domain.trim();
+    if (!d) { toast.error('Domain could not be detected — please type it manually'); return; }
     setStep('finding');
     try {
       // 1 — create the campaign
@@ -104,28 +138,54 @@ function OutreachModal({ opp, onClose }) {
             </div>
 
             <div className="input-group">
-              <label className="input-label">
-                <Globe size={14} /> Company Domain <span className="text-danger">*</span>
+              <label className="input-label" style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Globe size={14} /> Company Domain
+                </span>
+                {domainDetecting && (
+                  <span className="text-xs text-secondary" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Loader size={11} className="spin-icon" /> Detecting…
+                  </span>
+                )}
+                {!domainDetecting && domainSource === 'auto' && (
+                  <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 20,
+                    background: 'rgba(34,197,94,0.12)', color: 'var(--color-success)', fontWeight: 600 }}>
+                    ✓ Auto-detected
+                  </span>
+                )}
+                {!domainDetecting && domainSource === 'heuristic' && (
+                  <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 20,
+                    background: 'rgba(245,158,11,0.12)', color: 'var(--color-warning)', fontWeight: 600 }}>
+                    ⚠ Estimated — verify
+                  </span>
+                )}
               </label>
               <input
                 className="input"
-                placeholder="e.g. google.com, stripe.com"
+                placeholder="e.g. google.com"
                 value={domain}
-                onChange={e => setDomain(e.target.value)}
-                autoFocus
+                onChange={e => { setDomain(e.target.value); setDomainSource('manual'); }}
               />
-              <span className="text-xs text-secondary">The company's own domain — NOT the job board URL. Used to find the right contacts via Hunter → Apollo → RocketReach</span>
+              <span className="text-xs text-secondary">
+                {domainSource === 'auto'
+                  ? `Detected from Clearbit · Edit if incorrect`
+                  : domainSource === 'heuristic'
+                  ? `Estimated from company name · Please verify before proceeding`
+                  : `The company's own website domain — not the job board URL`
+                }
+              </span>
 
               {/* Low-credit advisory */}
               {quota?.hunter?.configured && (quota.hunter.searches_available ?? 99) < 5 && (
                 <div style={{ marginTop: 8, padding: '8px 12px', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8 }}>
                   <p className="text-xs" style={{ color: 'var(--color-warning)', margin: 0 }}>
                     ⚠️ Only <strong>{quota.hunter.searches_available}</strong> Hunter searches left this month.
-                    If you’ve searched this company before, cached contacts will be used automatically (0 credits).
+                    Cached contacts are used automatically for repeat domains.
                   </p>
                 </div>
               )}
             </div>
+
 
             <div className="input-group">
               <label className="input-label">Outreach Angle <span className="text-secondary">(optional)</span></label>
@@ -149,8 +209,12 @@ function OutreachModal({ opp, onClose }) {
 
             <div className="modal-footer">
               <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleStart} disabled={!domain.trim()}>
-                <Zap size={15} /> Find Contacts & Start
+              <button className="btn btn-primary" onClick={handleStart}
+                disabled={domainDetecting || !domain.trim()}>
+                {domainDetecting
+                  ? <><Loader size={14} className="spin-icon" /> Detecting…</>
+                  : <><Zap size={15} /> Find Contacts & Start</>
+                }
               </button>
             </div>
           </div>
