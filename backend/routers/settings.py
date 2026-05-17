@@ -226,6 +226,120 @@ async def test_provider(
 
 
 # ─────────────────────────────────────────────────────────────
+# Search Quota — live usage from Hunter / Apollo
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/search-quota")
+async def get_search_quota(
+    refresh: bool = False,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Return API quota (used / available) for Hunter.io and Apollo.
+
+    Results are cached in user_profiles for 1 hour to avoid burning a
+    search credit just to check the credit balance.
+
+    Set ?refresh=true to force a live fetch (costs 0 credits — it's the
+    /account endpoint, not a domain search).
+    """
+    import json
+    from datetime import datetime, timezone, timedelta
+
+    user_id = user["user_id"]
+    supabase = get_supabase_admin()
+    cred = get_credential_service()
+
+    # ── Load cached quota (stored in user_profiles JSONB column) ─
+    CACHE_TTL = timedelta(hours=1)
+
+    profile_row = supabase.table("user_profiles").select(
+        "quota_cache, quota_cache_at"
+    ).eq("user_id", user_id).single().execute()
+    profile = profile_row.data or {}
+
+    cached_at_raw = profile.get("quota_cache_at")
+    cached_data   = profile.get("quota_cache") or {}
+
+    cache_is_fresh = False
+    if cached_at_raw and not refresh:
+        try:
+            cached_at = datetime.fromisoformat(cached_at_raw.replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) - cached_at < CACHE_TTL:
+                cache_is_fresh = True
+        except Exception:
+            pass
+
+    if cache_is_fresh and cached_data:
+        return {**cached_data, "cached": True, "cached_at": cached_at_raw}
+
+    # ── Fetch live quota from Hunter.io ──────────────────────────
+    import httpx
+
+    hunter_quota = {"plan": "unknown", "searches_used": 0, "searches_available": 0, "configured": False}
+    apollo_quota = {"plan": "unknown", "configured": False, "note": "Apollo does not expose quota via API — track manually"}
+
+    try:
+        hunter_key = cred.get_decrypted_field(user_id, "hunter_key")
+        if hunter_key:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(
+                    "https://api.hunter.io/v2/account",
+                    params={"api_key": hunter_key},
+                )
+            if r.status_code == 200:
+                acc = r.json().get("data", {})
+                searches = acc.get("requests", {}).get("searches", {})
+                hunter_quota = {
+                    "plan":                acc.get("plan_name", "unknown"),
+                    "searches_used":       searches.get("used", 0),
+                    "searches_available":  searches.get("available", 0),
+                    "searches_total":      searches.get("used", 0) + searches.get("available", 0),
+                    "configured":          True,
+                }
+    except Exception:
+        pass
+
+    try:
+        apollo_key = cred.get_decrypted_field(user_id, "apollo_key")
+        if apollo_key:
+            apollo_quota["configured"] = True
+            # Apollo free plan doesn't expose quota — we track locally
+            # Count how many domains we've searched via Apollo in this calendar month
+            from datetime import date
+            month_start = date.today().replace(day=1).isoformat()
+            apollo_contacts = supabase.table("contacts") \
+                .select("id") \
+                .eq("user_id", user_id) \
+                .eq("source", "apollo") \
+                .gte("created_at", month_start) \
+                .execute()
+            apollo_quota["domains_searched_this_month"] = len(apollo_contacts.data or [])
+            apollo_quota["note"] = "Apollo quota tracked from saved contacts (API doesn't expose usage)"
+    except Exception:
+        pass
+
+    result = {
+        "hunter": hunter_quota,
+        "apollo": apollo_quota,
+        "cached": False,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # ── Write back to cache ───────────────────────────────────────
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        supabase.table("user_profiles").update({
+            "quota_cache": result,
+            "quota_cache_at": now_iso,
+        }).eq("user_id", user_id).execute()
+    except Exception:
+        pass  # cache write failure is non-fatal
+
+    return result
+
+
+# ─────────────────────────────────────────────────────────────
 # Provider Preferences
 # ─────────────────────────────────────────────────────────────
 

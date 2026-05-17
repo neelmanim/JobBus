@@ -94,9 +94,54 @@ async def waterfall_search(
     Try providers in waterfall order: Hunter → Apollo → RocketReach.
     Returns (results, provider_name_that_succeeded).
     Never raises — returns empty list if all fail.
+
+    OPTIMIZATION: Before hitting any API, checks the contacts table for
+    contacts at this domain found within the last 30 days. If found,
+    returns them immediately — zero API credits consumed.
     """
     user_id = user["user_id"]
     cred = get_credential_service()
+
+    # ── Layer 0: Domain-level contact cache (saves API credits) ──
+    from datetime import date, timedelta
+    thirty_days_ago = (date.today() - timedelta(days=30)).isoformat()
+    try:
+        supabase = get_supabase_admin()
+        cached = supabase.table("contacts") \
+            .select("*") \
+            .eq("user_id", user_id) \
+            .ilike("company", f"%{company}%") \
+            .gte("created_at", thirty_days_ago) \
+            .limit(limit) \
+            .execute()
+
+        if cached.data and len(cached.data) >= 1:
+            logger.info(
+                f"Domain cache hit: returning {len(cached.data)} cached contacts "
+                f"for {domain} (saved within 30 days)"
+            )
+            from providers.search.base import ContactResult, classify_persona
+            cached_results = [
+                ContactResult(
+                    first_name=r.get("first_name", ""),
+                    last_name=r.get("last_name", ""),
+                    email=r.get("email", ""),
+                    title=r.get("title", ""),
+                    company=r.get("company", company),
+                    linkedin_url=r.get("linkedin_url"),
+                    confidence_score=r.get("confidence_score"),
+                    persona_type=r.get("persona_type", "other"),
+                    source=r.get("source", "cache"),
+                )
+                for r in cached.data
+                if r.get("email")
+            ]
+            if cached_results:
+                return cached_results, "cache"
+    except Exception as e:
+        logger.debug(f"Cache check failed (non-fatal): {e}")
+
+    # ── Layer 1+: Live provider waterfall ────────────────────────
 
     # Build available providers in cascade order
     cascade = []
@@ -133,3 +178,4 @@ async def waterfall_search(
 
     logger.warning(f"Waterfall: all providers failed for {domain}")
     return [], "none"
+

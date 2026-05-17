@@ -135,6 +135,8 @@ export default function Settings() {
   const [searchProvider, setSearchProvider] = useState('hunter');
   const [savingPref, setSavingPref] = useState(false);
   const autoTestedRef = useRef(false); // only auto-test once per session
+  const [quota, setQuota] = useState(null);
+  const [quotaLoading, setQuotaLoading] = useState(false);
 
   // ── Email Style ───────────────────────────────────────────
   const [style, setStyle] = useState({ signature_name: '', signature_title: '', signature_linkedin: '', custom_instructions: '' });
@@ -158,6 +160,8 @@ export default function Settings() {
     try {
       const data = await api.getProviderStatus();
       setProviderStatus(data || {});
+      // Auto-load quota whenever providers tab is active and keys exist
+      if (data?.hunter_key) loadQuota();
       setAiProvider(data.ai_provider || 'groq');
       setAiModel(data.ai_model || 'auto');
       setSearchProvider(data.search_provider || 'hunter');
@@ -181,7 +185,19 @@ export default function Settings() {
     } catch { /* silent */ }
   }
   async function loadEmailStyle() {
-    try { const d = await api.getEmailStyle(); if (d) setStyle(d); } catch { /* silent */ }
+    try {
+      const d = await api.getEmailStyle();
+      if (d) setStyle(s => ({ ...s, ...d }));
+    } catch {}
+  }
+
+  async function loadQuota(forceRefresh = false) {
+    setQuotaLoading(true);
+    try {
+      const q = await api.getSearchQuota(forceRefresh);
+      setQuota(q);
+    } catch {}
+    setQuotaLoading(false);
   }
 
   // ── SMTP Handlers ─────────────────────────────────────────
@@ -458,6 +474,45 @@ export default function Settings() {
                 </select>
               </div>
             </div>
+
+            {/* ── Hunter Quota Bar ─────────────────────────────── */}
+            {quota?.hunter?.configured && (() => {
+              const h = quota.hunter;
+              const used  = h.searches_used      ?? 0;
+              const avail = h.searches_available  ?? 0;
+              const total = h.searches_total      ?? (used + avail);
+              const pct   = total > 0 ? Math.round((used / total) * 100) : 0;
+              const color = avail > 10 ? 'var(--color-success)' : avail > 4 ? 'var(--color-warning)' : 'var(--color-danger)';
+              return (
+                <div style={{ marginTop: 16, padding: '12px 16px', background: 'var(--surface-secondary)', borderRadius: 10, border: '1px solid var(--border-subtle)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <div>
+                      <span className="text-sm" style={{ fontWeight: 600 }}>Hunter.io Credits</span>
+                      <span className="text-xs text-secondary" style={{ marginLeft: 8 }}>
+                        {h.plan} plan · {used} used / {total} total · <strong style={{ color }}>{avail} remaining</strong>
+                      </span>
+                    </div>
+                    <button className="btn btn-ghost btn-sm" onClick={() => loadQuota(true)} disabled={quotaLoading} title="Refresh quota">
+                      <RefreshCw size={12} className={quotaLoading ? 'spin-icon' : ''} />
+                    </button>
+                  </div>
+                  <div style={{ background: 'var(--surface-tertiary)', borderRadius: 6, height: 8, overflow: 'hidden' }}>
+                    <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 6, transition: 'width 0.4s ease' }} />
+                  </div>
+                  {avail < 5 && (
+                    <p className="text-xs" style={{ color: 'var(--color-danger)', marginTop: 6 }}>
+                      ⚠️ Only {avail} searches left this month. Cached contacts will be used for repeat domains automatically.
+                    </p>
+                  )}
+                  {quota.cached && (
+                    <p className="text-xs text-secondary" style={{ marginTop: 4 }}>
+                      <Clock size={10} style={{ marginRight: 3 }} />
+                      Quota cached · <button className="btn-link text-xs" onClick={() => loadQuota(true)}>Refresh now</button>
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           <div className="form-actions" style={{ justifyContent: 'flex-end' }}>

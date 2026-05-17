@@ -19,6 +19,13 @@ function OutreachModal({ opp, onClose }) {
   const [domain, setDomain]       = useState(opp.domain || '');
   const [angle, setAngle]         = useState('');
   const [result, setResult]       = useState(null);
+  const [quota, setQuota]         = useState(null);
+
+  // Load quota silently on mount — no spinner, never blocks the user
+  useEffect(() => {
+    api.getSearchQuota().then(q => setQuota(q)).catch(() => {});
+  }, []);
+
 
   const company = opp.company || opp.company_name || 'Company';
   const title   = opp.title   || opp.role_title   || 'Untitled Role';
@@ -108,6 +115,16 @@ function OutreachModal({ opp, onClose }) {
                 autoFocus
               />
               <span className="text-xs text-secondary">The company's own domain — NOT the job board URL. Used to find the right contacts via Hunter → Apollo → RocketReach</span>
+
+              {/* Low-credit advisory */}
+              {quota?.hunter?.configured && (quota.hunter.searches_available ?? 99) < 5 && (
+                <div style={{ marginTop: 8, padding: '8px 12px', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8 }}>
+                  <p className="text-xs" style={{ color: 'var(--color-warning)', margin: 0 }}>
+                    ⚠️ Only <strong>{quota.hunter.searches_available}</strong> Hunter searches left this month.
+                    If you’ve searched this company before, cached contacts will be used automatically (0 credits).
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="input-group">
