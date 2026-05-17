@@ -104,7 +104,7 @@ class RemotiveCollector:
     async def search_jobs(self, query: str, location: str = "") -> list[dict]:
         """Search Remotive for remote jobs. Always works, no key needed."""
         try:
-            params = {"search": query, "limit": 20}
+            params = {"search": query, "limit": 40}  # fetch more so filtering still leaves enough
             async with httpx.AsyncClient(timeout=20) as client:
                 response = await client.get(self.BASE_URL, params=params)
                 response.raise_for_status()
@@ -164,6 +164,10 @@ class CompanyInfoCollector:
 async def search_jobs_auto(query: str, location: str = "") -> tuple[list[dict], str]:
     """Waterfall job search: JSearch (premium key) → Remotive (free, always available).
 
+    Results are filtered by title relevance — Remotive's search is fuzzy and often
+    returns unrelated roles. We keep a job only if at least one meaningful word
+    from the query appears in the role title.
+
     Returns:
         (list of normalized job dicts, source_name used)
     """
@@ -171,12 +175,14 @@ async def search_jobs_auto(query: str, location: str = "") -> tuple[list[dict], 
     if jsearch.has_key:
         jobs = await jsearch.search_jobs(query=query, location=location)
         if jobs:
-            return jobs, "jsearch"
+            return _filter_by_title_relevance(jobs, query), "jsearch"
 
     # Free fallback — always available, no key needed
     remotive = RemotiveCollector()
     jobs = await remotive.search_jobs(query=query, location=location)
-    return jobs, "remotive"
+    filtered = _filter_by_title_relevance(jobs, query)
+    # If strict filter is too aggressive (< 3 results), relax and return all
+    return (filtered if len(filtered) >= 3 else jobs), "remotive"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -184,6 +190,36 @@ async def search_jobs_auto(query: str, location: str = "") -> tuple[list[dict], 
 def _strip_html(text: str) -> str:
     """Lightweight HTML tag stripper for Remotive descriptions."""
     return re.sub(r"<[^>]+>", " ", text).strip()
+
+
+# Stop-words to ignore when matching query to title
+_STOP_WORDS = {
+    "a", "an", "the", "and", "or", "for", "in", "at", "to", "of",
+    "with", "is", "are", "be", "as", "on", "it", "its",
+    "senior", "junior", "mid", "lead", "staff", "principal",  # seniority (not role-specific)
+}
+
+
+def _filter_by_title_relevance(jobs: list[dict], query: str) -> list[dict]:
+    """Keep only jobs where the role title is relevant to the search query.
+
+    Splits the query into meaningful words (strips stop-words), then keeps
+    a job only if at least one query word appears in the role title.
+    Falls back to all jobs if query has no meaningful words.
+    """
+    query_words = [
+        w.lower() for w in re.split(r"[\s,/]+", query)
+        if len(w) >= 3 and w.lower() not in _STOP_WORDS
+    ]
+    if not query_words:
+        return jobs
+
+    relevant = []
+    for job in jobs:
+        title_lower = job.get("role_title", "").lower()
+        if any(qw in title_lower for qw in query_words):
+            relevant.append(job)
+    return relevant
 
 
 def _extract_keywords(text: str) -> list[str]:
@@ -198,6 +234,11 @@ def _extract_keywords(text: str) -> list[str]:
         "graphql", "rest", "grpc", "microservices",
         "ci/cd", "devops", "sre", "agile", "scrum",
         "swift", "kotlin", "flutter", "react native",
+        "product manager", "product management", "product owner",
+        "data analyst", "data science", "data engineer",
+        "ux", "ui", "design", "figma",
+        "sales", "marketing", "growth", "seo",
+        "finance", "accounting", "legal", "operations",
     }
     text_lower = text.lower()
     found = [kw for kw in tech_keywords if kw in text_lower]
