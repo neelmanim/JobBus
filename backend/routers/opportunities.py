@@ -68,58 +68,74 @@ async def search_opportunities(
     # Score each opportunity against the resume (or the query itself)
     scored = scorer.get_top_picks(jobs, resume_dict, max_count=20)
 
-    # Persist opportunities to DB
+    # Persist opportunities to DB using explicit deduplication (no upsert constraint needed)
     supabase = get_supabase_admin()
     saved = []
+    logger = __import__("logging").getLogger(__name__)
+
     for opp in scored:
         score_result = opp.pop("_score")
-        job_url = opp.get("job_url") or ""
+        job_url = (opp.get("job_url") or "").strip()
         data = {
             "user_id": user["user_id"],
             "company_name": opp.get("company_name", ""),
-            "role_title": opp.get("role_title", ""),
-            "job_url": job_url or None,  # store NULL not empty string
-            "score": score_result.total,
-            "tier": score_result.tier.value,
-            "signals": opp.get("signals", {}),
+            "role_title":   opp.get("role_title", ""),
+            "job_url":      job_url or None,
+            "score":        score_result.total,
+            "tier":         score_result.tier.value,
+            "signals":      opp.get("signals", {}),
             "recommended_angle": OpportunityScorer.recommend_angle(
                 score_result, opp.get("signals", {})
             ).value,
-            "status": "discovered",
-            "location": opp.get("location", ""),
+            "status":    "discovered",
+            "location":  opp.get("location", ""),
             "is_remote": opp.get("is_remote", False),
-            "source": opp.get("source", source),
+            "source":    opp.get("source", source),
         }
         try:
+            # Deduplicate without relying on a DB UNIQUE constraint
             if job_url:
-                result = supabase.table("opportunities").upsert(
-                    data,
-                    on_conflict="user_id,job_url",
-                ).execute()
+                existing = supabase.table("opportunities").select("id") \
+                    .eq("user_id", user["user_id"]).eq("job_url", job_url).execute()
             else:
-                # No URL — insert only if company+role combo not already saved
                 existing = supabase.table("opportunities").select("id") \
                     .eq("user_id", user["user_id"]) \
                     .eq("company_name", data["company_name"]) \
-                    .eq("role_title", data["role_title"]) \
-                    .execute()
-                if existing.data:
-                    result = supabase.table("opportunities").update(data) \
-                        .eq("id", existing.data[0]["id"]).execute()
-                else:
-                    result = supabase.table("opportunities").insert(data).execute()
+                    .eq("role_title",   data["role_title"]).execute()
+
+            if existing.data:
+                result = supabase.table("opportunities").update(data) \
+                    .eq("id", existing.data[0]["id"]).execute()
+            else:
+                result = supabase.table("opportunities").insert(data).execute()
+
             if result.data:
                 row = result.data[0]
-                # Add UI-friendly aliases so frontend opp.company / opp.title resolve
                 row["company"] = row.get("company_name", "")
-                row["title"] = row.get("role_title", "")
-                row["url"] = row.get("job_url", "")
-                row["domain"] = _extract_domain(row.get("job_url", ""))
+                row["title"]   = row.get("role_title", "")
+                row["url"]     = row.get("job_url", "")
+                row["domain"]  = _extract_domain(row.get("job_url", ""))
                 saved.append(row)
+            else:
+                # DB write failed but we still have the scored data — return it anyway
+                opp["company"] = opp.get("company_name", "")
+                opp["title"]   = opp.get("role_title", "")
+                opp["url"]     = opp.get("job_url", "")
+                opp["domain"]  = _extract_domain(opp.get("job_url", ""))
+                opp["score"]   = data["score"]
+                opp["tier"]    = data["tier"]
+                saved.append(opp)
+
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"Failed to save opportunity: {e}")
-            continue
+            logger.warning(f"DB write failed for opportunity, returning in-memory: {e}")
+            # Still surface the result to the user even if DB write fails
+            opp["company"] = opp.get("company_name", "")
+            opp["title"]   = opp.get("role_title", "")
+            opp["url"]     = job_url
+            opp["domain"]  = _extract_domain(job_url)
+            opp["score"]   = data["score"]
+            opp["tier"]    = data["tier"]
+            saved.append(opp)
 
     return {"opportunities": saved, "count": len(saved), "source": source}
 
